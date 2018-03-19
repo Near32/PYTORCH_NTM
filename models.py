@@ -645,8 +645,8 @@ class NTMController(nn.Module) :
 		# LSTMs Controller :
 		# input = ( x_t, y_{t-1}, r0_{t-1}, ..., rN_{t-1}) / rX = X-th vector read from the memory.
 		self.LSTMinput_size = (self.input_dim + self.output_dim) + self.mem_dim*self.nbr_read_heads
-		# hidden state / output = 
-		self.LSTMhidden_size = self.hidden_dim * (self.nbr_read_heads+self.nbr_read_heads)
+		# hidden state / output = controller_output_{t}
+		self.LSTMhidden_size = self.hidden_dim
 		num_layers = self.nbr_layers
 		dropout = 0.5
 
@@ -684,7 +684,7 @@ class NTMController(nn.Module) :
 		# Previously read vector from the memory :
 		self.prev_read_vec = x['prev_read_vec']
 
-		ctrl_input = torch.cat( [self.input, self.prev_desired_output], dim=2)
+		ctrl_input = torch.cat( [self.input, self.prev_desired_output, self.prev_read_vec], dim=2)
 		
 		# Controller States :
 		#	hidden states h_{t-1} : batch x nbr_layers x hidden_dim 
@@ -697,8 +697,11 @@ class NTMController(nn.Module) :
 
 		return self.LSTMs_output, self.ControllerStates['prev_hc']
 
-	def forward_external_output_fn(self, x) :
-		#TODO
+	def forward_external_output_fn(self, slots_read) :
+		ext_fc_inp = torch.cat( [self.LSTMs_output, slots_read], dim=1)
+		self.output_fn_output = self.output_fn(ext_fc_inp)
+		return self.output_fn_output
+
 
 class NTM(nn.Module) :
 	def __init__(self,input_dim=32, 
@@ -742,8 +745,14 @@ class NTM(nn.Module) :
 											use_cuda=self.use_cuda) :
 
 	def build_heads(self) :
-		self.readHeads = ReadHeads(nbr_heads=self.nbr_read_heads, input_dim=self.hidden_dim, mem_nbr_slots=self.mem_nbr_slots,use_cuda=self.use_cuda)
-		self.writeHeads = WriteHeads(nbr_heads=self.nbr_write_heads, input_dim=self.hidden_dim, mem_nbr_slots=self.mem_nbr_slots, use_cuda=self.use_cuda)	
+		self.readHeads = ReadHeads(nbr_heads=self.nbr_read_heads, 
+									input_dim=self.hidden_dim, 
+									mem_nbr_slots=self.mem_nbr_slots,
+									use_cuda=self.use_cuda)
+		self.writeHeads = WriteHeads(nbr_heads=self.nbr_write_heads, 
+										input_dim=self.hidden_dim, 
+										mem_nbr_slots=self.mem_nbr_slots, 
+										use_cuda=self.use_cuda)	
 
 
 	def forward(self,x) :
@@ -772,6 +781,19 @@ class NTM(nn.Module) :
 
 		return outputs
 
+		# Controller Outputs :
+		self.controller_output = self.controller.forward_controller(x)
+
+		# Memory Read :
+		self.read_outputs = self.readHeads(self.controller_output)
+
+		# Memory Write :
+		self.writeHeads(self.controller_output)
+
+		# External Output Function :
+		self.ext_output = self.controller.forward_external_output_fn(self.read_outputs)
+
+		return self.ext_output 
 
 	def reset(self) :
 		self.controller.init_controllerStates()
