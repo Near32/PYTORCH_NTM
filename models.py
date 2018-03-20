@@ -571,43 +571,97 @@ class VAE(nn.Module) :
 		return out, mu, log_var
 
 
-class ReadHeads(nn.Module) :
-	def __init_(self, nbr_heads=1, input_dim, mem_nbr_slots=32, use_cuda=True) :
-		super(ReadHeads,self)__init__()
+class BasicHeads(nn.Module) :
+	def __init__(self,memory, input_dim=256, nbr_heads=1, use_cuda=True) :
+		super(BasicHeads,self).__init__()
 
+		self.memory = memory
+		self.mem_dim = self.memory.mem_dim
 		self.nbr_heads = nbr_heads
 		self.input_dim = input_dim
-		self.mem_nbr_slots = mem_nbr_slots
 		self.use_cuda = use_cuda
 
-	def read(self,x,Mem) :
-		w = x['weights']
-		nbr_w = len(w)
-		
-		r = 0
-		for i in range(nbr_w) : 
-			r += w[i] * Mem[i]
+		self.is_read = None 
 
-		return r
+		self.generate_ctrl2gate()
+		self.reset_prev_w(batch_dim=self.memory.batch_dim)
+
+	def generate_ctrl2gate(self) :
+		if self.is_read is None :
+			raise NotImplementedError
+		
+		if self.is_read :
+			# Generate k,beta,g,s,gamma : M + 1 + 1 + 3 + 1 = M+6
+			self.head_gate_dim = self.memory.mem_dim+6 
+		else :
+			# Generate k,beta,g,s,gamma, e, a : M + 1 + 1 + 3 + 1 + M + M = 3*M+6
+			self.head_gate_dim = 3*self.memory.mem_dim+6 
+		
+		self.ctrl2head = nn.Linear(self.input_dim, self.nbr_heads * self.head_gate_dim )
+		
+	def reset_prev_w(self, batch_dim):
+		self.batch_dim = batch_dim
+        self.prev_w = Variable(torch.zeros(self.batch_dim, self.nbrHeads, self.memory.mem_nbr_slots))
+        if self.use_cuda :
+        	self.prev_w = self.prev_w.cuda()
+
+
+	def write(self,ctlr_input) :
+		raise NotImplementedError
+	def read(self,ctrl_input) :
+		raise NotImplementedError
+
+	def forward(self, ctrl_input) :
+		self.ctrl_output = self.ctrl2head(ctrl_input)
+		self.ctrl_output = self.ctrl_output.view((-1,self.nbr_heads,self.head_gate_dim))
+
+		self._generate_addressing()
+
+		# Addressing :
+		self.wc = self.memory.content_addressing( self.k, self.beta)
+		self.w = self.memory.location_addressing( self.prev_w, self.wc, self.g, self.s, self.gamma)
+
+		self.prev_w = self.w
+
+		return self.w 
+
+
+
+
+	def _generate_addressing(self) :
+		self.k = self.ctrl_output[:,:,0:self.mem_dim]
+		self.beta = F.softplus( self.ctrl_output[:,:,self.mem_dim:self.mem_dim+1] )
+		self.g = F.sigmoid( self.ctrl_output[:,:,self.mem_dim+1:self.mem_dim+2] )
+		self.s = F.softmax( F.softplus( self.ctrl_output[:,:,self.mem_dim+2:self.mem_dim+5] ) )
+		self.gamma = 1+F.softplus( self.ctrl_output[:,:,self.mem_dim+5:self.mem_dim+6] )	
+
+		if not(self.is_read) :
+			self.erase = self.ctrl_output[:,:,self.mem_dim+6:2*self.mem_dim+6]
+			self.add = self.ctrl_output[:,:,2*self.mem_dim+6:3*self.mem_dim+6]
+
+
+class ReadHeads(BasicHeads) :
+	def __init_(self, memory, nbr_heads=1, input_dim=256, use_cuda=True) :
+		super(ReadHeads,self)__init__(memory=memory,input_dim=input_dim,nbr_heads=nbr_heads)
+
+		self.is_read = True
+		
+	def read(self, ctrl_input) :
+		
+		w = super(ReadHeads,self).forward(ctrl_input)
+		r = self.memory.read( w )
+
+		return r 
 
 class WriteHeads(nn.Module) :
-	def __init_(self, nbr_heads=1, input_dim=512, mem_nbr_slots=32, use_cuda=True) :
-		super(WriteHeads,self)__init__()
+	def __init_(self, memory, nbr_heads=1, input_dim=256, use_cuda=True) :
+		super(WriteHeads,self)__init__(memory=memory,input_dim=input_dim,nbr_heads=nbr_heads)
 
-		self.nbr_heads = nbr_heads
-		self.input_dim = input_dim
-		self.mem_nbr_slots = mem_nbr_slots
-		self.use_cuda = use_cuda
+		self.is_read = False
 		
-	def write(self,x,Mem) :
-		w = x['weights']
-		nbr_w = len(w)
-		
-		r = 0
-		for i in range(nbr_w) : 
-			r += w[i] * Mem[i]
-
-		return r
+	def write(self, ctrl_input) :
+		w = super(ReadHeads,self).forward(ctrl_input)
+		self.memory.write( w=w, erase=self.erase, add=self.add )
 
 
 class NTMController(nn.Module) :
@@ -697,10 +751,116 @@ class NTMController(nn.Module) :
 
 		return self.LSTMs_output, self.ControllerStates['prev_hc']
 
-	def forward_external_output_fn(self, slots_read) :
-		ext_fc_inp = torch.cat( [self.LSTMs_output, slots_read], dim=1)
+	def forward_external_output_fn(self, ctrl_output slots_read) :
+		ext_fc_inp = torch.cat( [ctrl_output, slots_read], dim=1)
 		self.output_fn_output = self.output_fn(ext_fc_inp)
+		
 		return self.output_fn_output
+		
+
+class NTMMemory(nn.Module) :
+	def __init__(self, mem_nbr_slots, mem_dim, use_cuda=True) :
+		super(NTMMemory,self).__init__()
+
+		self.mem_nbr_slots = mem_nbr_slots
+		self.mem_dim = mem_dim
+		self.use_cuda = use_cuda
+
+		if self.use_cuda :
+			self.register_buffer('init_mem', Variable(torch.Tensor(self.mem_nbr_slots,self.mem_dim)).cuda() )
+		else :
+			self.register_buffer('init_mem', Variable(torch.Tensor(self.mem_nbr_slots,self.mem_dim)) )
+		
+		self.initialize_memory()
+
+	def initialize_memory(self) :
+
+		dev = 1.0/np.sqrt(self.mem_dim+self.mem_nbr_slots)
+		nn.init.uniform( self.init_mem, -dev, dev)
+
+	def reset(self,batch_dim=1) :
+		self.batch_dim = batch_dim
+		self.memory = self.init_mem.clone().repeat(self.batch_dim,1,1)
+		
+		if self.use_cuda :
+			self.memory = self.memory.cuda()
+
+		self.pmemory = self.memory
+
+	def content_addressing(k,beta) :
+		nbrHeads = k.size()[1]
+		eps = 1e-10
+		w = Variable(torch.Tensor(self.batch_dim, nbrHeads, self.mem_nbr_slots) )
+		if self.use_cuda :
+			w = w.cuda()
+
+		for bidx in range(self.batch_dim) :
+			for hidx in range(nbrHeads) :
+				for i in range(self.mem_nbr_slots) :
+					cossim = F.cosine_similarity( k[bidx][hidx], self.memory[bidx][i], dim=-1, eps=eps )
+					print('cossim:',cossim.size()) 
+					w[bidx][hidx][i] =  F.softmax( cossim, dim=0 )
+
+		return w 
+
+	def location_addressing(self, pw, wc,g,s,gamma) :
+		nbrHeads = g.size()[1]
+		
+		# Interpolation : 
+		wg =  g*wc + (1-g)*pw
+
+		# Shift :
+		ws = Variable(torch.Tensor(self.batch_dim, nbrHeads, self.mem_nbr_slots) )
+		if self.use_cuda :
+			ws = ws.cuda()
+		for bidx in range(self.batch_dim) :
+			for hidx in range(nbrHeads) :
+				res = self._conv_shift(wg[bidx][hidx], s[bidx][hidx])
+				print('convshitf : ', res.size())
+				ws[bidx][hidx] = res
+		
+		# Sharpening :
+		w = Variable(torch.Tensor(self.batch_dim, nbrHeads, self.mem_nbr_slots) )
+		if self.use_cuda :
+			w = w.cuda()
+		
+		for bidx in range(self.batch_dim) :
+			for hidx in range(nbrHeads) :
+				wgam = ws[bidx][hidx] ** gamma[bidx][hidx]
+				sumw = torch.sum( wgam )
+				print('wgam :',wgam.size())
+				print('sumw :', sumw.size())
+				w[bidx][hidx] = wgam / sumw
+
+		return w		
+
+	def _conv_shitf(self,wg,s) :
+		size = s.size()[1]
+		c = torch.cat([wg[-size+1:], wg, wg[:size-1]])
+		res = F.conv1d( c, s)
+		return res[1:-1]
+
+	def write(self, w, erase, add) :
+		self.pmemory = self.memory
+		self.memory = Variable(torch.Tensor(self.batch_dim,self.mem_nbr_slots,self.mem_dim))
+		if self.use_cuda :
+			self.memory = self.memory.cuda()
+		for bidx in range(self.batch_dim) :
+			for headidx in range(erase.size()[1]) :
+				e = torch.ger(w[bidx][headidx], erase[bidx][headidx])
+				a = torch.ger(w[bidx][headidx], add[bidx][headidx])
+				self.memory[bidx] = self.pmemory[bidx]*(1-e)+a
+
+	def read(self, w) :
+		nbrHeads = w.size()[1]
+		self.reading_t = Variable(torch.Tensor(self.batch_dim,nbrHeads,self.mem_dim))
+		if self.use_cuda :
+			self.reading_t = self.reading_t.cuda()
+		for bidx in range(self.batch_size) :
+			for headidx in range(nbrHeads) :
+				self.reading_t[bidx][headidx] = w[bidx][headidx] * self.memory[bidx] 
+			 
+		return self.reading_t
 
 
 class NTM(nn.Module) :
@@ -712,6 +872,7 @@ class NTM(nn.Module) :
 						mem_dim= 32, 
 						nbr_read_heads=1, 
 						nbr_write_heads=1, 
+						batch_size=32,
 						use_cuda=True) :
 
 		super(NTM,self).__init__()
@@ -724,14 +885,20 @@ class NTM(nn.Module) :
 		self.mem_dim = mem_dim
 		self.nbr_read_heads = nbr_read_heads
 		self.nbr_write_heads = nbr_write_heads
+		self.batch_size = batch_size
 		self.use_cuda = use_cuda
 
+		self.build_memory()
 		self.build_controller()
 		self.build_heads()
 
 
 		if self.use_cuda :
 			self = self.cuda()
+
+	def build_memory(self) :
+		self.memory = NTMMemory(mem_nbr_slots=self.mem_nbr_slots,mem_dim=self.mem_dim)
+		self.memory.reset(batch_dim=self.batch_size)
 
 	def build_controller(self) :
 		self.controller = NTMController( input_dim=self.input_dim, 
@@ -745,53 +912,33 @@ class NTM(nn.Module) :
 											use_cuda=self.use_cuda) :
 
 	def build_heads(self) :
-		self.readHeads = ReadHeads(nbr_heads=self.nbr_read_heads, 
+		self.readHeads = ReadHeads(memory=self.memory,
+									nbr_heads=self.nbr_read_heads, 
 									input_dim=self.hidden_dim, 
 									mem_nbr_slots=self.mem_nbr_slots,
 									use_cuda=self.use_cuda)
-		self.writeHeads = WriteHeads(nbr_heads=self.nbr_write_heads, 
+		self.writeHeads = WriteHeads(memory=self.memory,
+										nbr_heads=self.nbr_write_heads, 
 										input_dim=self.hidden_dim, 
 										mem_nbr_slots=self.mem_nbr_slots, 
 										use_cuda=self.use_cuda)	
 
 
 	def forward(self,x) :
-		# Input : batch x seq_len x input_dim
-		self.input = x['input']
-		# Previous Desired Output : batch x seq_len x output_dim
-		self.prev_desired_output = x['prev_desired_output']
-		ctrl_input = torch.cat( [self.input, self.prev_desired_output], dim=2)
-		# Memory : batch x nbr_slots x mem_dim
-		self.M = x['M']
-		# Controller's States :
-		#	vector weights w_{t-1} : 'weights' ; nbr_heads x weight_dim=mem_nbr_slots
-		#	hidden states h_{t-1} : 'hidden' : nbr_layers x hidden_dim 
-		self.ControllerStates = x['ControllerStates']
-		prev_w = self.ControllerStates['prev_w']
-		prev_hc = self.ControllerStates['prev_hc']
-
-
-		# Computations :
-		self.LSTMs_outputs = self.LSTMs(ctrl_input, prev_hc)
-
-		outputs = dict()
-		outputs['output'] = output
-		outputs['M'] = self.M
-		outputs['ControllerStates'] = self.ControllerStates
-
-		return outputs
-
+		
 		# Controller Outputs :
+		# batch_dim x hidden_dim
 		self.controller_output = self.controller.forward_controller(x)
 
 		# Memory Read :
+		# batch_dim x nbr_read_heads x mem_dim :
 		self.read_outputs = self.readHeads(self.controller_output)
 
 		# Memory Write :
 		self.writeHeads(self.controller_output)
 
 		# External Output Function :
-		self.ext_output = self.controller.forward_external_output_fn(self.read_outputs)
+		self.ext_output = self.controller.forward_external_output_fn(self.controller_output, self.read_outputs)
 
 		return self.ext_output 
 
