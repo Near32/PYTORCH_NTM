@@ -756,7 +756,7 @@ class NTMController(nn.Module) :
 		self.output_fn_output = self.output_fn(ext_fc_inp)
 		
 		return self.output_fn_output
-		
+
 
 class NTMMemory(nn.Module) :
 	def __init__(self, mem_nbr_slots, mem_dim, use_cuda=True) :
@@ -944,6 +944,44 @@ class NTM(nn.Module) :
 
 	def reset(self) :
 		self.controller.init_controllerStates()
+
+
+	def save(self,path) :
+		# Controller :
+		ctlr_wts = self.controller.state_dict()
+		ctrlpath = path + 'Controller.weights'
+		torch.save( ctrl_wts, ctrlpath )
+		print('Controller saved at : {}'.format(ctrlpath) )
+
+		# ReadHeads :
+		read_wts = self.readHeads.state_dict()
+		readpath = path + 'ReadHeads.weights'
+		torch.save( read_wts, readpath )
+		print('ReadHeads saved at : {}'.format(readpath) )
+		# WriteHeads :
+		write_wts = self.writeHeads.state_dict()
+		writepath = path + 'WriteHeads.weights'
+		torch.save( write_wts, writepath )
+		print('WriteHeads saved at : {}'.format(writepath) )
+		
+
+	def load(self,path) :
+		# Controller :
+		ctrlpath = path + 'Controller.weights'
+		self.controller.load_state_dict( torch.load( ctrlpath ) )
+		print('Controller loaded from : {}'.format(ctrlpath) )
+
+		# ReadHeads :
+		readpath = path + 'ReadHeads.weights'
+		self.readHeads.load_state_dict( torch.load( readpath ) )
+		print('ReadHeads loaded from : {}'.format(readpath) )
+		# WriteHeads :
+		writepath = path + 'WriteHeads.weights'
+		self.writeHeads.load_state_dict( torch.load( writepath ) )
+		print('WriteHeads loaded from : {}'.format(writepath) )
+		
+
+class CNN_NTM(NTM) :
 
 
 if __name__ == '__main__' :
