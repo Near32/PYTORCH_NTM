@@ -136,146 +136,12 @@ class STNbasedNet(nn.Module):
         return x
 
 
+
+
+
 class Decoder(nn.Module) :
 	def __init__(self,net_depth=3, z_dim=32, img_dim=128, conv_dim=64,img_depth=3 ) :
 		super(Decoder,self).__init__()
-		
-		self.net_depth = net_depth
-		self.dcs = []
-		outd = conv_dim*(2**self.net_depth)
-		ind= z_dim
-		k = 4
-		dim = k
-		pad = 1
-		stride = 2
-		self.fc = deconv( ind, outd, k, stride=1, pad=0, batchNorm=False)
-		
-		for i in reversed(range(self.net_depth)) :
-			ind = outd
-			outd = conv_dim*(2**i)
-			self.dcs.append( deconv( ind, outd,k,stride=stride,pad=pad) )
-			self.dcs.append( nn.LeakyReLU(0.05) )
-			dim = k-2*pad + stride*(dim-1)
-		self.dcs = nn.Sequential( *self.dcs) 
-			
-		ind = outd
-		outd = 1
-		outdim = img_dim
-		indim = dim
-		pad = 0
-		stride = 1
-		k = outdim +2*pad -stride*(indim-1)
-		self.dcout = deconv( ind, outd, k, stride=stride, pad=pad, batchNorm=False)
-		
-	def decode(self, z) :
-		z = z.view( z.size(0), z.size(1), 1, 1)
-		out = F.leaky_relu( self.fc(z), 0.05)
-		out = F.leaky_relu( self.dcs(out), 0.05)
-		out = F.sigmoid( self.dcout(out))
-		return out
-
-	def forward(self,z) :
-		return self.decode(z)
-
-class Encoder(nn.Module) :
-	def __init__(self,net_depth=3, img_dim=128, img_depth=3, conv_dim=64, z_dim=32 ) :
-		super(Encoder,self).__init__()
-		
-		self.net_depth = net_depth
-		self.cvs = []
-		outd = conv_dim
-		ind= img_depth
-		k = 4
-		dim = img_dim
-		pad = 1
-		stride = 2
-		self.cvs = []
-		self.cvs.append( conv( img_depth, conv_dim, 4, batchNorm=False))
-		self.cvs.append( nn.LeakyReLU(0.05) )
-		dim = (dim-k+2*pad)/stride +1
-
-		for i in range(1,self.net_depth,1) :
-			ind = outd
-			outd = conv_dim*(2**i)
-			self.cvs.append( conv( ind, outd,k,stride=stride,pad=pad) )
-			self.cvs.append( nn.LeakyReLU(0.05) )
-			dim = (dim-k+2*pad)/stride +1
-		self.cvs = nn.Sequential( *self.cvs)
-
-		ind = outd
-		outd = 64
-		outdim = 1
-		indim = dim
-		pad = 0
-		stride = 1
-		#k = int(indim +2*pad -stride*(outdim-1))
-		k=4
-		
-		#self.fc = conv( ind, outd, k, stride=stride,pad=pad, batchNorm=False)
-		# net_depth = 5 :
-		#self.fc = nn.Linear( 25088, 2048)
-		# net_depth = 3 :
-		self.fc = nn.Linear( 8192, 2048)
-		self.fc1 = nn.Linear( 2048, 1024)
-		self.fc1 = nn.Linear( 2048, 1024)
-		self.fc2 = nn.Linear( 1024, z_dim)
-		
-	def encode(self, x) :
-		out = self.cvs(x)
-
-		out = out.view( (-1, self.num_features(out) ) )
-		#print(out.size() )
-
-		out = F.leaky_relu( self.fc(out), 0.05 )
-		out = F.leaky_relu( self.fc1(out), 0.05 )
-		out = self.fc2(out)
-		
-		return out
-
-	def forward(self,x) :
-		return self.encode(x)
-
-	def num_features(self, x) :
-		size = x.size()[1:]
-		# all dim except the batch dim...
-		num_features = 1
-		for s in size :
-			num_features *= s
-		return num_features
-
-class betaVAE(nn.Module) :
-	def __init__(self, beta=1.0,net_depth=4,img_dim=224, z_dim=32, conv_dim=64, use_cuda=True, img_depth=3) :
-		super(betaVAE,self).__init__()
-		self.encoder = Encoder(net_depth=net_depth,img_dim=img_dim, img_depth=img_depth,conv_dim=conv_dim, z_dim=2*z_dim)
-		self.decoder = Decoder(net_depth=net_depth,img_dim=img_dim, img_depth=img_depth, conv_dim=conv_dim, z_dim=z_dim)
-
-		self.beta = beta
-		self.use_cuda = use_cuda
-
-		if self.use_cuda :
-			self = self.cuda()
-
-	def reparameterize(self, mu,log_var) :
-		eps = torch.randn( (mu.size()[0], mu.size()[1]) )
-		veps = Variable( eps)
-		#veps = Variable( eps, requires_grad=False)
-		if self.use_cuda :
-			veps = veps.cuda()
-		z = mu + veps * torch.exp( log_var/2 )
-		return z
-
-	def forward(self,x) :
-		h = self.encoder( x)
-		mu, log_var = torch.chunk(h, 2, dim=1 )
-		z = self.reparameterize( mu,log_var)
-		out = self.decoder(z)
-
-		return out, mu, log_var
-
-
-class DecoderXYS3(nn.Module) :
-	def __init__(self,net_depth=3, z_dim=32, img_dim=128, conv_dim=64,img_depth=3 ) :
-		super(DecoderXYS3,self).__init__()
 		
 		self.net_depth = net_depth
 		self.dcs = []
@@ -315,9 +181,9 @@ class DecoderXYS3(nn.Module) :
 	def forward(self,z) :
 		return self.decode(z)
 
-class EncoderXYS3(nn.Module) :
+class Encoder(nn.Module) :
 	def __init__(self,net_depth=3, img_dim=128, img_depth=3, conv_dim=64, z_dim=32 ) :
-		super(EncoderXYS3,self).__init__()
+		super(Encoder,self).__init__()
 		
 		self.net_depth = net_depth
 		self.img_depth= img_depth
@@ -378,11 +244,11 @@ class EncoderXYS3(nn.Module) :
 
 
 
-class betaVAEXYS3(nn.Module) :
+class betaVAE(nn.Module) :
 	def __init__(self, beta=1.0,net_depth=4,img_dim=224, z_dim=32, conv_dim=64, use_cuda=True, img_depth=3) :
-		super(betaVAEXYS3,self).__init__()
-		self.encoder = EncoderXYS3(z_dim=2*z_dim, img_depth=img_depth, img_dim=img_dim, conv_dim=conv_dim,net_depth=net_depth)
-		self.decoder = DecoderXYS3(z_dim=z_dim, img_dim=img_dim, img_depth=img_depth, net_depth=net_depth)
+		super(betaVAE,self).__init__()
+		self.encoder = Encoder(z_dim=2*z_dim, img_depth=img_depth, img_dim=img_dim, conv_dim=conv_dim,net_depth=net_depth)
+		self.decoder = Decoder(z_dim=z_dim, img_dim=img_dim, img_depth=img_depth, net_depth=net_depth)
 
 		self.z_dim = z_dim
 		self.img_dim=img_dim
@@ -404,16 +270,50 @@ class betaVAEXYS3(nn.Module) :
 		return z
 
 	def forward(self,x) :
-		h = self.encoder( x)
-		mu, log_var = torch.chunk(h, 2, dim=1 )
-		z = self.reparameterize( mu,log_var)
-		out = self.decoder(z)
+		self.h = self.encoder( x)
+		self.mu, self.log_var = torch.chunk(self.h, 2, dim=1 )
+		self.z = self.reparameterize( self.mu,self.log_var)
+		self.out = self.decoder(self.z)
 
-		return out, mu, log_var
+		return self.out, self.mu, self.log_var
 
-class STNbasedEncoderXYS3(STNbasedNet) :
+	def encode(self,x) :
+		self.h = self.encoder( x)
+		self.mu, self.log_var = torch.chunk(self.h, 2, dim=1 )
+		self.z = self.reparameterize( self.mu,self.log_var)
+		
+		return self.z, self.mu, self.log_var
+
+	def save(self,path) :
+		# Encoder :
+		enc_wts = self.encoder.state_dict()
+		encpath = path + 'Encoder.weights'
+		torch.save( enc_wts, encpath )
+		print('Encoder saved at : {}'.format(encpath) )
+
+		# Decoder :
+		dec_wts = self.decoder.state_dict()
+		decpath = path + 'Decoder.weights'
+		torch.save( dec_wts, decpath )
+		print('Decoder saved at : {}'.format(decpath) )
+
+
+	def load(self,path) :
+		# Encoder :
+		encpath = path + 'Encoder.weights'
+		self.encoder.load_state_dict( torch.load( encpath ) )
+		print('Encoder loaded from : {}'.format(encpath) )
+		
+		# Decoder :
+		decpath = path + 'Decoder.weights'
+		self.decoder.load_state_dict( torch.load( decpath ) )
+		print('Decoder loaded from : {}'.format(decpath) )
+		
+
+
+class STNbasedEncoder(STNbasedNet) :
 	def __init__(self,net_depth=3, img_dim=128, img_depth=3, conv_dim=64, z_dim=32, nbr_stn=2, stn_stack_input=True ) :
-		super(STNbasedEncoderXYS3,self).__init__(input_dim=img_dim, input_depth=img_depth, nbr_stn=nbr_stn, stn_stack_input=stn_stack_input)
+		super(STNbasedEncoder,self).__init__(input_dim=img_dim, input_depth=img_depth, nbr_stn=nbr_stn, stn_stack_input=stn_stack_input)
 		
 		self.net_depth = net_depth
 		self.img_depth= img_depth
@@ -446,7 +346,7 @@ class STNbasedEncoderXYS3(STNbasedNet) :
 		self.fc3 = nn.Linear(64, self.z_dim)
 
 	def encode(self, x) :
-		x = super(STNbasedEncoderXYS3,self).forward(x)
+		x = super(STNbasedEncoder,self).forward(x)
 
 		out = F.leaky_relu( self.cv1(x), 0.15)
 		out = self.d1(out)
@@ -480,11 +380,11 @@ class STNbasedEncoderXYS3(STNbasedNet) :
 		return num_features
 
 
-class STNbasedBetaVAEXYS3(nn.Module) :
+class STNbasedBetaVAE(nn.Module) :
 	def __init__(self, beta=1.0,net_depth=4,img_dim=224, z_dim=32, conv_dim=64, use_cuda=True, img_depth=3) :
-		super(STNbasedBetaVAEXYS3,self).__init__()
-		self.encoder = STNbasedEncoderXYS3(z_dim=2*z_dim, img_depth=img_depth, img_dim=img_dim, conv_dim=conv_dim,net_depth=net_depth)
-		self.decoder = DecoderXYS3(z_dim=z_dim, img_dim=img_dim, img_depth=img_depth, net_depth=net_depth)
+		super(STNbasedBetaVAE,self).__init__()
+		self.encoder = STNbasedEncoder(z_dim=2*z_dim, img_depth=img_depth, img_dim=img_dim, conv_dim=conv_dim,net_depth=net_depth)
+		self.decoder = Decoder(z_dim=z_dim, img_dim=img_dim, img_depth=img_depth, net_depth=net_depth)
 
 		self.z_dim = z_dim
 		self.img_dim=img_dim
@@ -521,6 +421,32 @@ class STNbasedBetaVAEXYS3(nn.Module) :
 		return z,mu, log_var
 
 
+	def save(self,path) :
+		# Encoder :
+		enc_wts = self.encoder.state_dict()
+		encpath = path + 'Encoder.weights'
+		torch.save( enc_wts, encpath )
+		print('Encoder saved at : {}'.format(encpath) )
+
+		# Decoder :
+		dec_wts = self.decoder.state_dict()
+		decpath = path + 'Decoder.weights'
+		torch.save( dec_wts, decpath )
+		print('Decoder saved at : {}'.format(decpath) )
+
+
+	def load(self,path) :
+		# Encoder :
+		encpath = path + 'Encoder.weights'
+		self.encoder.load_state_dict( torch.load( encpath ) )
+		print('Encoder loaded from : {}'.format(encpath) )
+		
+		# Decoder :
+		encpath = path + 'Decoder.weights'
+		self.decoder.load_state_dict( torch.load( decpath ) )
+		print('Decoder loaded from : {}'.format(decpath) )
+		
+
 
 class Rescale(object) :
 	def __init__(self, output_size) :
@@ -541,38 +467,11 @@ class Rescale(object) :
 
 		return sample 
 
-class VAE(nn.Module) :
-	def __init__(self, net_depth=4,img_dim=224, z_dim=32, conv_dim=64, use_cuda=True, img_depth=3) :
-		#Encoder.__init__(self, img_dim=img_dim, conv_dim=conv_dim, z_dim=2*z_dim)
-		#Decoder.__init__(self, img_dim=img_dim, conv_dim=conv_dim, z_dim=z_dim)
-		super(VAE,self).__init__()
-		self.encoder = Encoder(net_depth=net_depth,img_dim=img_dim, img_depth=img_depth,conv_dim=conv_dim, z_dim=2*z_dim)
-		self.decoder = Decoder(net_depth=net_depth,img_dim=img_dim, img_depth=img_depth, conv_dim=conv_dim, z_dim=z_dim)
 
-		self.use_cuda = use_cuda
-
-		if self.use_cuda :
-			self = self.cuda()
-
-	def reparameterize(self, mu,log_var) :
-		eps = torch.randn( (mu.size()[0], mu.size()[1]) )
-		veps = Variable( eps)
-		if self.use_cuda :
-			veps = veps.cuda()
-		z = mu + veps * torch.exp( log_var/2 )
-		return z
-
-	def forward(self,x) :
-		h = self.encoder( x)
-		mu, log_var = torch.chunk(h, 2, dim=1 )
-		z = self.reparameterize( mu,log_var)
-		out = self.decoder(z)
-
-		return out, mu, log_var
 
 
 class BasicHeads(nn.Module) :
-	def __init__(self,memory, input_dim=256, nbr_heads=1, use_cuda=True) :
+	def __init__(self,memory, input_dim=256, nbr_heads=1, use_cuda=True,is_read=True) :
 		super(BasicHeads,self).__init__()
 
 		self.memory = memory
@@ -581,7 +480,7 @@ class BasicHeads(nn.Module) :
 		self.input_dim = input_dim
 		self.use_cuda = use_cuda
 
-		self.is_read = None 
+		self.is_read = is_read 
 
 		self.generate_ctrl2gate()
 		self.reset_prev_w(batch_dim=self.memory.batch_dim)
@@ -601,9 +500,9 @@ class BasicHeads(nn.Module) :
 		
 	def reset_prev_w(self, batch_dim):
 		self.batch_dim = batch_dim
-        self.prev_w = Variable(torch.zeros(self.batch_dim, self.nbrHeads, self.memory.mem_nbr_slots))
-        if self.use_cuda :
-        	self.prev_w = self.prev_w.cuda()
+		self.prev_w = Variable(torch.zeros(self.batch_dim, self.nbr_heads, self.memory.mem_nbr_slots))
+		if self.use_cuda :
+			self.prev_w = self.prev_w.cuda()
 
 
 	def write(self,ctlr_input) :
@@ -641,10 +540,9 @@ class BasicHeads(nn.Module) :
 
 
 class ReadHeads(BasicHeads) :
-	def __init_(self, memory, nbr_heads=1, input_dim=256, use_cuda=True) :
-		super(ReadHeads,self)__init__(memory=memory,input_dim=input_dim,nbr_heads=nbr_heads)
+	def __init__(self, memory, nbr_heads=1, input_dim=256, use_cuda=True) :
+		super(ReadHeads,self).__init__(memory=memory,input_dim=input_dim,nbr_heads=nbr_heads,is_read=True)
 
-		self.is_read = True
 		
 	def read(self, ctrl_input) :
 		
@@ -653,14 +551,13 @@ class ReadHeads(BasicHeads) :
 
 		return r 
 
-class WriteHeads(nn.Module) :
-	def __init_(self, memory, nbr_heads=1, input_dim=256, use_cuda=True) :
-		super(WriteHeads,self)__init__(memory=memory,input_dim=input_dim,nbr_heads=nbr_heads)
+class WriteHeads(BasicHeads) :
+	def __init__(self, memory, nbr_heads=1, input_dim=256, use_cuda=True) :
+		super(WriteHeads,self).__init__(memory=memory,input_dim=input_dim,nbr_heads=nbr_heads,is_read=False)
 
-		self.is_read = False
 		
 	def write(self, ctrl_input) :
-		w = super(ReadHeads,self).forward(ctrl_input)
+		w = super(WriteHeads,self).forward(ctrl_input)
 		self.memory.write( w=w, erase=self.erase, add=self.add )
 
 
@@ -735,7 +632,7 @@ class NTMController(nn.Module) :
 		self.input = x['input']
 		# Previous Desired Output : batch x seq_len x output_dim
 		self.prev_desired_output = x['prev_desired_output']
-		# Previously read vector from the memory :
+		# Previously read vector from the memory : batch x seq_len x nbr_read_head * mem_dim
 		self.prev_read_vec = x['prev_read_vec']
 
 		ctrl_input = torch.cat( [self.input, self.prev_desired_output, self.prev_read_vec], dim=2)
@@ -751,7 +648,7 @@ class NTMController(nn.Module) :
 
 		return self.LSTMs_output, self.ControllerStates['prev_hc']
 
-	def forward_external_output_fn(self, ctrl_output slots_read) :
+	def forward_external_output_fn(self, ctrl_output, slots_read) :
 		ext_fc_inp = torch.cat( [ctrl_output, slots_read], dim=1)
 		self.output_fn_output = self.output_fn(ext_fc_inp)
 		
@@ -767,14 +664,15 @@ class NTMMemory(nn.Module) :
 		self.use_cuda = use_cuda
 
 		if self.use_cuda :
-			self.register_buffer('init_mem', Variable(torch.Tensor(self.mem_nbr_slots,self.mem_dim)).cuda() )
+			#self.register_buffer('init_mem', Variable(torch.Tensor(self.mem_nbr_slots,self.mem_dim)).cuda() )
+			self.init_mem = Variable(torch.Tensor(self.mem_nbr_slots,self.mem_dim)).cuda()
 		else :
-			self.register_buffer('init_mem', Variable(torch.Tensor(self.mem_nbr_slots,self.mem_dim)) )
+			#self.register_buffer('init_mem', Variable(torch.Tensor(self.mem_nbr_slots,self.mem_dim)) )
+			self.init_mem = Variable(torch.Tensor(self.mem_nbr_slots,self.mem_dim))
 		
 		self.initialize_memory()
 
 	def initialize_memory(self) :
-
 		dev = 1.0/np.sqrt(self.mem_dim+self.mem_nbr_slots)
 		nn.init.uniform( self.init_mem, -dev, dev)
 
@@ -909,29 +807,34 @@ class NTM(nn.Module) :
 											mem_dim=self.mem_dim, 
 											nbr_read_heads=self.nbr_read_heads, 
 											nbr_write_heads=self.nbr_write_heads, 
-											use_cuda=self.use_cuda) :
+											use_cuda=self.use_cuda)
 
 	def build_heads(self) :
 		self.readHeads = ReadHeads(memory=self.memory,
 									nbr_heads=self.nbr_read_heads, 
 									input_dim=self.hidden_dim, 
-									mem_nbr_slots=self.mem_nbr_slots,
 									use_cuda=self.use_cuda)
 		self.writeHeads = WriteHeads(memory=self.memory,
 										nbr_heads=self.nbr_write_heads, 
 										input_dim=self.hidden_dim, 
-										mem_nbr_slots=self.mem_nbr_slots, 
 										use_cuda=self.use_cuda)	
 
 
 	def forward(self,x) :
-		
+		# NTM_input :
+		# 'input' : batch_dim x seq_len x self.input_dim
+		# 'prev_desired_output' : batch_dim x seq_len x self.output_dim
+		# 'prev_read_vec' : batch_dim x seq_len x self.nbr_read_head * self.mem_dim
+		x['prev_read_vec'] = self.read_outputs.unsqueeze(1)
+
 		# Controller Outputs :
-		# batch_dim x hidden_dim
-		self.controller_output = self.controller.forward_controller(x)
+		# output : batch_dim x hidden_dim
+		# state : ( h, c) 
+		self.controller_output, self.controller_state = self.controller.forward_controller(x)
 
 		# Memory Read :
-		# batch_dim x nbr_read_heads x mem_dim :
+		# TODO : verify dim :
+		# batch_dim x nbr_read_heads * mem_dim :
 		self.read_outputs = self.readHeads(self.controller_output)
 
 		# Memory Write :
@@ -948,7 +851,7 @@ class NTM(nn.Module) :
 
 	def save(self,path) :
 		# Controller :
-		ctlr_wts = self.controller.state_dict()
+		ctrl_wts = self.controller.state_dict()
 		ctrlpath = path + 'Controller.weights'
 		torch.save( ctrl_wts, ctrlpath )
 		print('Controller saved at : {}'.format(ctrlpath) )
@@ -981,8 +884,86 @@ class NTM(nn.Module) :
 		print('WriteHeads loaded from : {}'.format(writepath) )
 		
 
-class CNN_NTM(NTM) :
+class betaVAE_NTM(nn.Module) :
+	def __init__(self, latent_dim, NTMhidden_dim=512, NTMoutput_dim=32, NTMnbr_layers=1, NTMmem_nbr_slots=128, NTMmem_dim= 32, 
+						NTMnbr_read_heads=1, NTMnbr_write_heads=1, batch_size=32,
+						beta=1.0,net_depth=4,img_dim=224, conv_dim=64, use_cuda=True, img_depth=1) :
+		super(betaVAE_NTM,self).__init__()
 
+		self.NTM = NTM(input_dim=latent_dim, 
+						hidden_dim=NTMhidden_dim, 
+						output_dim=NTMoutput_dim, 
+						nbr_layers=NTMnbr_layers, 
+						mem_nbr_slots=NTMmem_nbr_slots, 
+						mem_dim= NTMmem_dim, 
+						nbr_read_heads=NTMnbr_read_heads, 
+						nbr_write_heads=NTMnbr_write_heads, 
+						batch_size=32,
+						use_cuda=use_cuda)
+		self.betaVAE = betaVAE(beta=beta,
+								net_depth=net_depth,
+								img_dim=img_dim, 
+								z_dim=latent_dim, 
+								conv_dim=conv_dim, 
+								use_cuda=use_cuda, 
+								img_depth=img_depth)
+
+	def forward(self,x,target) :
+		self.out, self.mu, self.log_var = self.betaVAE.forward(x)
+		
+		self.NTM_input = dict()
+		# Seq_len = 1 :
+		self.NTM_input['input'] = self.betaVAE.z.unsqueeze(1)
+		self.NTM_input['prev_desired_output'] = target.unsqueeze(1)
+
+		self.ext_output = self.NTM.forward(self.NTM_input)
+
+		return self.ext_output, self.mu, self.log_var, self.out  
+
+	def resetNTM(self) :
+		self.NTM.reset()
+
+	def save(self,path) :
+		self.NTM.save(path)
+		self.betaVAE.save(path)
+
+	def load(self,path) :
+		self.NTM.load(path)
+		self.betaVAE.load(path)
+
+
+def test() :
+	latent_dim = 10 
+	NTMhidden_dim=512 
+	NTMoutput_dim=32 
+	NTMnbr_layers=1
+	NTMmem_nbr_slots=128
+	NTMmem_dim= 32
+
+	NTMnbr_read_heads=1
+	NTMnbr_write_heads=1
+	batch_size=32
+	
+	beta=1.0
+	net_depth=4
+	img_dim=224
+	conv_dim=64
+	use_cuda=True
+	img_depth=1
+
+	path = './test'
+
+	betaVAENTM = betaVAE_NTM(latent_dim, NTMhidden_dim=NTMhidden_dim, NTMoutput_dim=NTMoutput_dim, NTMnbr_layers=NTMnbr_layers, 
+							NTMmem_nbr_slots=NTMmem_nbr_slots, NTMmem_dim= NTMmem_dim, NTMnbr_read_heads=NTMnbr_read_heads, 
+							NTMnbr_write_heads=NTMnbr_write_heads, batch_size=batch_size,
+							beta=beta,net_depth=net_depth,img_dim=img_dim, conv_dim=conv_dim, use_cuda=use_cuda, img_depth=img_depth)
+
+	print(betaVAENTM)
+
+	betaVAENTM.save(path)
+
+	betaVAENTM.load(path)
+	
 
 if __name__ == '__main__' :
 	test()
