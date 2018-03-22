@@ -616,7 +616,8 @@ class NTMController(nn.Module) :
 		# input = (h_t, r0_{t}, ..., rN_{t})
 		self.EXTinput_size = self.LSTMhidden_size + self.mem_dim * self.nbr_read_heads
 		self.output_fn.append( nn.Linear(self.EXTinput_size, self.output_dim))
-		self.output_fn.append( nn.Tanh())
+		#self.output_fn.append( nn.Tanh())
+		self.output_fn.append( nn.Softmax())
 		self.output_fn = nn.Sequential( *self.output_fn)
 
 	def init_controllerStates(self) :
@@ -908,8 +909,21 @@ class betaVAE_NTM(nn.Module) :
 								use_cuda=use_cuda, 
 								img_depth=img_depth)
 
+		self.mu = None
+		self.log_var = None 
+		self.VAE_output = None
+
+		self.NTM_input = None
+		self.ext_output = None
+
+		self.lambdaVAE = 1.0
+		self.lambdaNTM = 1.0 
+		self.VAE_loss = None
+		self.NTM_loss = None 
+		self.total_loss = None  
+
 	def forward(self,x,target) :
-		self.out, self.mu, self.log_var = self.betaVAE.forward(x)
+		self.VAE_output, self.mu, self.log_var = self.betaVAE.forward(x)
 		
 		self.NTM_input = dict()
 		# Seq_len = 1 :
@@ -918,7 +932,35 @@ class betaVAE_NTM(nn.Module) :
 
 		self.ext_output = self.NTM.forward(self.NTM_input)
 
-		return self.ext_output, self.mu, self.log_var, self.out  
+		return self.ext_output, self.mu, self.log_var, self.VAE_output  
+
+	def compute_losses(self,x,y,target) :
+		self.forward(x=x,target=target)
+
+		# VAE loss :
+		self.reconst_loss = F.binary_cross_entropy( self.VAE_output, x, size_average=False)
+		# expected log likelyhood :
+		try :
+			self.expected_log_lik = torch.mean( Bernoulli( self.VAE_output ).log_prob( x ) )
+		except Exception as e :
+			print(e)
+			self.expected_log_lik = Variable(torch.ones(1).cuda())
+		
+		# kl divergence :
+		self.kl_divergence = 0.5 * torch.mean( torch.sum( (self.mu**2 + torch.exp(self.log_var) - self.log_var -1), dim=1) )
+		# ELBO :
+		#self.elbo = self.expected_log_lik - self.betaVAE.beta * self.kl_divergence
+		self.VAE_loss = self.reconst_loss + self.betaVAE.beta*self.kl_divergence
+				
+		# NTM loss :
+		self.NTM_loss = F.binary_cross_entropy_with_logits(input=self.ext_output,target=y)
+
+		# Sum :
+		self.total_loss = self.lambdaVAE * self.VAE_loss, + self. lambdaNTM * self.NTM_loss 
+
+		return self.total_loss, self.VAE_loss, self.NTM_loss
+
+
 
 	def resetNTM(self) :
 		self.NTM.reset()

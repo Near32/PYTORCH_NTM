@@ -148,7 +148,9 @@ def test_OmniglotSeq() :
 	import cv2
 	
 	root = './data/'
-	dataset = Omniglot(root=root,download=True)
+	h = 240
+	w = 240
+	dataset = Omniglot(root=root,h=h,w=w)
 	#dataset = Omniglot(root=root,background=False,download=True)
 	print(len(dataset))
 	
@@ -165,7 +167,7 @@ def test_OmniglotSeq() :
 		
 		#sample = dataset[idx]
 		
-		img = np.array( sample[0]) 
+		img = (sample['image'].numpy()*255).transpose( (1,2,0) ) 
 		cv2.imshow('test',img)
 		
 		key = cv2.waitKey(1) & 0xFF
@@ -196,11 +198,53 @@ def test_OmniglotSeq() :
 			sample = dataset.getSample( seq[idx_sample]['alphabet'], seq[idx_sample]['character'], seq[idx_sample]['sample'] )
 			image_path = dataset.sampleSample4Character4Alphabet( seq[idx_sample]['alphabet'], seq[idx_sample]['character'], seq[idx_sample]['sample'])
 			print(image_path,'/{}'.format(nbrCharacter4Task))
-			
+
+from collections import namedtuple
+
+Item = namedtuple('Item', ('alphabet','character','sample','target','nbrCharacter') )
+
+def test_OmniglotBatchedSeq() :
+	import cv2
+	
+	root = './data/'
+	h = 240
+	w = 240
+	dataset = Omniglot(root=root,h=h,w=w)
+	#dataset = Omniglot(root=root,background=False,download=True)
+	print(len(dataset))
+	
+	batch_size = 2
+	max_nbr_char = 5
+	idx_alphabet = list()
+	for i in range(batch_size) : idx_alphabet.append(i)
+
+	idx_sample = 0 
+
+	keys = ('alphabet','character','sample','target','nbrCharacter')
+	seqs = list()
+	for s in range(batch_size) :
+		seq, nbrCharacter4Task, nbrSample4Task = dataset.generateIterFewShotInputSequence( alphabet_idx=idx_alphabet[s],max_nbr_char=max_nbr_char)
+		dseqs = {'alphabet':[],'character':[],'sample':[],'target':[],'nbrCharacter':[] }
+		for el in seq :
+			for k in el.keys() :
+				dseqs[k].append( el[k] )
+		seqs.append(dseqs)
+	seqs = [ {k:[seqs[b][k] for b in range(batch_size)] }for k in keys]
+	dseqs = dict()
+	for d in seqs :
+		dseqs.update(d)
+	# key x task_idx x seq_idx
+	for k in dseqs.keys() :
+		dseqs[k] = zip(*dseqs[k])
+	print(seqs)
+	raise
+	batch = dataset.getBatchedSample(seqs)
+
 
 if __name__ == "__main__" :
 	#test_Omniglot()
 	#test_OmniglotClass()
 	#test_OmniglotTask()
 	test_OmniglotSeq()
+	#test_OmniglotBatchedSeq()
 

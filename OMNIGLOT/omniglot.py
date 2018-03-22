@@ -3,14 +3,80 @@ from PIL import Image
 from os.path import join
 import os
 import random
+import torch
 import torch.utils.data as data
+from torchvision import transforms
 from utils import download_url, check_integrity, list_dir, list_files
 import numpy as np
+import cv2 
+from collections import OrderedDict
 
 def onehotencoded(y, nbrClass) :
     r = np.zeros(nbrClass)
     r[y] = 1
     return r 
+
+class RandomRecolorNormalize(object) :
+    def __init__(self,sizew=224,sizeh=224) :
+        self.sizeh = sizeh
+        self.sizew = sizew
+
+    def __call__(self,sample) :
+        img, target = sample['image'], sample['label']
+        h,w,c = img.shape
+
+        
+        #recolor :
+        t = [np.random.uniform()]
+        t += [np.random.uniform()]
+        t += [np.random.uniform()]
+        t = np.array(t)
+
+        img = img * (1+t)
+
+        # Normalize color between 0 and 1 :
+        img = img / (255.0*1.0)
+
+        # Normalize the size of the image :
+        #img = cv2.resize(img, (self.sizeh,self.sizew))
+
+        return {'image':img, 'label':target}
+
+
+class data2loc(object) :
+    def __call__(self,sample) :
+        img, target = sample['image'], sample['label']
+        h,w,c = img.shape
+
+        outputs = np.zeros((1,2))
+
+        outputs[0,0] = target['x']
+        outputs[0,1] = target['y']
+                
+            
+        return {'image':img, 'outputs':outputs}
+
+
+class ToTensor(object) :
+    def __call__(self, sample) :
+        image, target = sample['image'], sample['label']
+        #swap color axis :
+        # numpy : H x W x C
+        # torch : C x H x W
+        image = image.transpose( (2,0,1) )
+        
+        return {'image':torch.from_numpy(image/255.0), 'label':torch.from_numpy(target) }
+
+Transform = transforms.Compose([
+                            #data2loc(),
+                            ToTensor()
+                            ])
+
+TransformPlus = transforms.Compose([
+                            RandomRecolorNormalize(),
+                            #data2loc(),
+                            ToTensor()
+                            ])
 
 class Omniglot(data.Dataset):
     """`Omniglot <https://github.com/brendenlake/omniglot>`_ Dataset.
@@ -34,13 +100,15 @@ class Omniglot(data.Dataset):
         'images_evaluation': '6b91aef0f799c5bb55b94e3f2daec811'
     }
 
-    def __init__(self, root, background=True,
-                 transform=None, target_transform=None,
+    def __init__(self, root, background=True,h=120,w=120,
+                 transform=Transform, target_transform=None,
                  download=False):
         self.root = join(os.path.expanduser(root), self.folder)
         self.background = background
         self.transform = transform
         self.target_transform = target_transform
+        self.h = h
+        self.w = w 
 
         if download:
             self.download()
@@ -110,8 +178,12 @@ class Omniglot(data.Dataset):
 
         return samples, nbrChar, nbrSamples
 
-    def generateIterFewShotLearningTask(self, alphabet_idx) :
+    def generateIterFewShotLearningTask(self, alphabet_idx,max_nbr_char=None) :
         nbrChar = self.nbrCharacters4Alphabet(alphabet_idx)
+
+        if max_nbr_char is not None :
+            nbrChar = min(max_nbr_char,nbrChar)
+
         nbrSample4clist = list()
         samplesIt = list()
         for c in range(nbrChar) :
@@ -132,28 +204,35 @@ class Omniglot(data.Dataset):
 
         return samples, nbrChar, nbrSamples
 
-    def generateIterFewShotInputSequence(self, alphabet_idx) :
+    def generateIterFewShotInputSequence(self, alphabet_idx, max_nbr_char=None) :
         '''
         Returns :
             sequence of tuple (x_0, y_{-1}(dummy)), (x_1, y_0) ... (x_n, y_n-1), (x_n+1(dummy), y_n)
             nbr of characters in this task.
             nbr of samples in the whole task.
         '''
-        samples, nbrChar, nbrSamples = self.generateIterFewShotLearningTask(alphabet_idx=alphabet_idx)
+        samples, nbrChar, nbrSamples = self.generateIterFewShotLearningTask(alphabet_idx=alphabet_idx,max_nbr_char=max_nbr_char)
         seq = list()
         for i in range(nbrSamples) :
             d = dict()
             if i== 0 :
                 x = samples[0]
                 y = -1
+                label = samples[0]['character']
             else :
                 x = samples[i]
                 y = samples[i-1]['character']
-            dy = dict()
-            dy['target'] = onehotencoded(y, nbrClass=nbrChar)
+                label = samples[i]['character']
             
             d.update(x)
+            
+            dy = dict()
+            dy['target'] = onehotencoded(y, nbrClass=nbrChar)
             d.update(dy)
+            dy = dict()
+            dy['label'] = onehotencoded(label, nbrClass=nbrChar)
+            d.update(dy)
+            
             seq.append( d )
         
         # last sample's target regularization :
@@ -162,6 +241,7 @@ class Omniglot(data.Dataset):
         d = dict()
         d.update(samples[0])
         d.update(dy)
+
         seq.append( d )
 
         return seq, nbrChar, nbrSamples+1  
@@ -169,16 +249,44 @@ class Omniglot(data.Dataset):
 
     def getSample(self, alphabet_idx, character_idx, sample_idx) :
         image_path, character_class, idxa = self.sampleSample4Character4Alphabet( alphabet_idx, character_idx, sample_idx)
-        image = Image.open(image_path, mode='r').convert('L')
+        #image = Image.open(image_path, mode='r').convert('L')
+        image = cv2.imread(image_path)
+        h,w,c = image.shape 
+        image = np.ascontiguousarray(image)
+        image = cv2.resize( image, (self.h, self.w) )
 
-        if self.transform:
-            image = self.transform(image)
+        sample = {'image':image, 'label':np.array(character_class)}
+        if self.transform is not None :
+            sample = self.transform(sample)
+        
+        return sample
 
-        if self.target_transform:
-            character_class = self.target_transform(character_class)
+    def getBatchedSample(self, batch_seq) :
+        
+        # TODO : finish and test...
+        '''
+        Args :
+            batch_seq : key x batch_idx x seq_idx    
+        '''
+        lsample = []
+        nbrSamples = len(batch_seq['sample'][0])
+        batch_size = len(batch_seq['sample'])
+        for s in range(nbrSamples) :
+            lsample.append(list())
+            for i in range(batch_size) :
+                alphabet_idx = batch_seq[s][i]#[]
+                character_idx = batch_seq[s][i]#[]
+                sample_idx = batch_seq[s][i]#[]
+                lsample[s].append( self.getSample( alphabet_idx, character_idx, sample_idx ).values() )
 
-        return image, character_class
+        #batch = zip(*lsample)
+        print(batch)
+        for i,el in enumerate(batch) :
+            batch[i] = torch.cat(el, dim=0)
+        print('-'*20)
+        print(batch)
 
+        return batch
 
     def __getitem__(self, index):
         """
