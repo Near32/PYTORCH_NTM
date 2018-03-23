@@ -136,7 +136,7 @@ def train_model(betaVAENTM,dataset, optimizer, SAVE_PATH,path,args,nbr_epoch=100
 
 				total_loss, VAE_loss, NTM_loss = betaVAENTM.compute_losses(x=image,y=label,target=target)
 				
-				var_task_loss += total_loss
+				var_task_loss = var_task_loss + total_loss
 				epoch_loss += total_loss.cpu().data[0]
 
 				if idx_sample % 10 == 0:
