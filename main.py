@@ -139,6 +139,8 @@ def train_model(betaVAENTM,dataset, optimizer, SAVE_PATH,path,args,nbr_epoch=100
 				var_task_loss = var_task_loss + total_loss
 				epoch_loss += total_loss.cpu().data[0]
 
+				
+
 				if idx_sample % 10 == 0:
 				    print ("Epoch[%d/%d], Step [%d/%d], Total Loss: %.4f, "
 				           "Reconst Loss: %.4f " 
@@ -147,16 +149,17 @@ def train_model(betaVAENTM,dataset, optimizer, SAVE_PATH,path,args,nbr_epoch=100
 				    if best_loss is not None :
 				    	print("Epoch Loss : {} / Best : {}".format(epoch_loss, best_loss))
 
-			# Temporary save :
-			lp = os.path.join(SAVE_PATH,'temp')
-			betaVAENTM.save(path=lp)
-		
 			# Backprop + Optimize :
 			optimizer.zero_grad()
 			#var_task_loss.backward(retain_graph=True)
 			var_task_loss.backward()
 			optimizer.step()
-
+			
+			# Temporary save :
+			lp = os.path.join(SAVE_PATH,'temp')
+			betaVAENTM.save(path=lp)
+		
+			
 
 		if best_loss is None :
 			#first validation : let us set the initialization but not save it :

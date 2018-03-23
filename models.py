@@ -632,6 +632,8 @@ class NTMController(nn.Module) :
 		else :
 			self.ControllerStates = (Variable( torch.zeros(self.nbr_layers,self.batch_size,self.LSTMhidden_size) ),Variable( torch.zeros(self.nbr_layers,self.batch_size,self.LSTMhidden_size) ) )
 	
+		self.LSTMSs_OUTPUTs = list()
+		self.LSTMSs_OUTPUTs.append( (0,self.ControllerStates))
 
 	def reset(self) :
 		self.init_controllerStates()
@@ -649,13 +651,12 @@ class NTMController(nn.Module) :
 		# Controller States :
 		#	hidden states h_{t-1} : batch x nbr_layers x hidden_dim 
 		#	cell states c_{t-1} : batch x nbr_layers x hidden_dim 
-		prev_hc = self.ControllerStates
-
+		prev_hc = self.LSTMSs_OUTPUTs[-1][1]
 
 		# Computations :
-		self.LSTMs_output, self.ControllerStates = self.LSTMs(ctrl_input, prev_hc)
+		self.LSTMSs_OUTPUTs.append( self.LSTMs(ctrl_input, prev_hc) )
 		
-		return self.LSTMs_output, self.ControllerStates
+		return self.LSTMSs_OUTPUTs[-1]
 
 	def forward_external_output_fn(self, ctrl_output, slots_read) :
 		ext_fc_inp = torch.cat( [ctrl_output, slots_read], dim=2).squeeze(1)
@@ -688,18 +689,20 @@ class NTMMemory(nn.Module) :
 		#self.reset()
 
 	def reset(self) :
-		if self.use_cuda :
-			self.memory = self.init_mem.clone().repeat(self.batch_dim,1,1).cuda()
-		else :
-			self.memory = self.init_mem.clone().repeat(self.batch_dim,1,1)
-		
-		self.pmemory = self.memory
+		self.memory = list()
 
+		if self.use_cuda :
+			self.memory.append( self.init_mem.clone().repeat(self.batch_dim,1,1).cuda() )
+		else :
+			self.memory.append( self.init_mem.clone().repeat(self.batch_dim,1,1) )
+		
+		self.reading_t = list()
+		
 	def content_addressing(self,k,beta) :
 		nbrHeads = k.size()[1]
 		eps = 1e-10
 		
-		memory_bhSMidx = torch.cat([self.memory.unsqueeze(1)]*nbrHeads, dim=1)
+		memory_bhSMidx = torch.cat([self.memory[-1].unsqueeze(1)]*nbrHeads, dim=1)
 		kmat = torch.cat([k.unsqueeze(2)]*self.mem_nbr_slots, dim=2)
 		cossim = F.cosine_similarity( kmat, memory_bhSMidx, dim=3).view((self.batch_dim,nbrHeads,-1))
 		w = F.softmax( beta * cossim)
@@ -743,27 +746,27 @@ class NTMMemory(nn.Module) :
 		return ret 
 	
 	def write(self, w, erase, add) :
-		self.pmemory = self.memory
-		
+		nmemory = torch.zeros(self.memory[-1].size() )
+		if self.use_cuda : nmemory = nmemory.cuda()
+
 		for bidx in range(self.batch_dim) :
 			for headidx in range(erase.size()[1]) :
 				e = torch.ger(w[bidx][headidx], erase[bidx][headidx])
 				a = torch.ger(w[bidx][headidx], add[bidx][headidx])
-				self.memory[bidx] = self.pmemory[bidx]*(1-e)+a
+				nmemory[bidx] = (self.memory[-1][bidx]*(1-e)+a ).data
+
+		if self.use_cuda :
+			self.memory.append( Variable(nmemory).cuda())
+		else :
+			self.memory.append( Variable(nmemory) )
 
 	def read(self, w) :
 		nbrHeads = w.size()[1]
-		if self.use_cuda :
-			self.reading_t = Variable(torch.zeros(self.batch_dim,nbrHeads,self.mem_dim)).cuda()
-		else :
-			self.reading_t = Variable(torch.zeros(self.batch_dim,nbrHeads,self.mem_dim))
-			
-		for headidx in range(nbrHeads) :
-			w = w[:,headidx]
-			for i in range(self.mem_dim) :
-				self.reading_t[:,headidx] = self.reading_t[:,headidx] + w[:,i] * self.memory[:,i] 
-			 
-		return self.reading_t
+		
+		memory_bhSMidx = torch.cat([self.memory[-1].unsqueeze(1)]*nbrHeads, dim=1)
+		self.reading_t.append( torch.sum( w.unsqueeze(3) * memory_bhSMidx, dim=2) )
+		
+		return self.reading_t[-1]
 
 
 class NTM(nn.Module) :
@@ -825,44 +828,49 @@ class NTM(nn.Module) :
 										input_dim=self.hidden_dim, 
 										use_cuda=self.use_cuda)	
 
-	def reset_read_outputs(self) :
+	def reset_outputs(self) :
+		self.read_outputs = list()
+
 		if self.use_cuda :
-			self.read_outputs = Variable(torch.zeros(self.batch_size,1,self.nbr_read_heads*self.mem_dim)).cuda()
+			self.read_outputs.append( Variable(torch.zeros(self.batch_size,1,self.nbr_read_heads*self.mem_dim)).cuda() )
 		else :
-			self.read_outputs = Variable(torch.zeros(self.batch_size,1,self.nbr_read_heads*self.mem_dim))
-			
+			self.read_outputs.append( Variable(torch.zeros(self.batch_size,1,self.nbr_read_heads*self.mem_dim)) )
+		
+		self.ext_output = list()
+		self.controller_output_state = list()
+
 	def forward(self,x) :
 		# NTM_input :
 		# 'input' : batch_dim x seq_len x self.input_dim
 		# 'prev_desired_output' : batch_dim x seq_len x self.output_dim
 		# 'prev_read_vec' : batch_dim x seq_len x self.nbr_read_head * self.mem_dim
-		x['prev_read_vec'] = self.read_outputs
+		x['prev_read_vec'] = self.read_outputs[-1]
 
 		# Controller Outputs :
 		# output : batch_dim x hidden_dim
 		# state : ( h, c) 
-		self.controller_output, self.controller_state = self.controller.forward_controller(x)
+		self.controller_output_state.append( self.controller.forward_controller(x) )
 
 		# Memory Read :
 		# TODO : verify dim :
 		# batch_dim x nbr_read_heads * mem_dim :
-		self.read_outputs = self.readHeads.read(self.controller_output)
+		self.read_outputs.append( self.readHeads.read(self.controller_output_state[-1][0]) )
 		
 		# Memory Write :
-		self.writeHeads.write(self.controller_output)
+		self.writeHeads.write(self.controller_output_state[-1][0])
 
 		# External Output Function :
-		self.ext_output = self.controller.forward_external_output_fn(self.controller_output, self.read_outputs)
+		self.ext_output.append( self.controller.forward_external_output_fn(self.controller_output_state[-1][0], self.read_outputs[-1]) )
 
-		return self.ext_output 
+		return self.ext_output[-1] 
 
 	def reset(self) :
 		self.controller.reset()
 		self.memory.reset()
-		self.reset_read_outputs()
 		self.readHeads.reset()
 		self.writeHeads.reset()
-
+		self.reset_outputs()
+		
 
 	def save(self,path) :
 		# Controller :
@@ -938,18 +946,20 @@ class betaVAE_NTM(nn.Module) :
 
 	def reset(self) :
 		self.NTM.reset()
+		self.NTM_input = list()
+		self.ext_output = list()
 
 	def forward(self,x,target) :
 		self.VAE_output, self.mu, self.log_var = self.betaVAE.forward(x)
 		
-		self.NTM_input = dict()
+		self.NTM_input.append( dict() )
 		# Seq_len = 1 :
-		self.NTM_input['input'] = self.betaVAE.z.unsqueeze(1)
-		self.NTM_input['prev_desired_output'] = target.unsqueeze(1)
+		self.NTM_input[-1]['input'] = self.betaVAE.z.unsqueeze(1)
+		self.NTM_input[-1]['prev_desired_output'] = target.unsqueeze(1)
 
-		self.ext_output = self.NTM.forward(self.NTM_input)
+		self.ext_output.append( self.NTM.forward(self.NTM_input[-1]) )
 
-		return self.ext_output, self.mu, self.log_var, self.VAE_output  
+		return self.ext_output[-1], self.mu, self.log_var, self.VAE_output  
 
 	def compute_losses(self,x,y,target) :
 		self.forward(x=x,target=target)
@@ -970,7 +980,7 @@ class betaVAE_NTM(nn.Module) :
 		self.VAE_loss = self.reconst_loss + self.betaVAE.beta*self.kl_divergence
 				
 		# NTM loss :
-		self.NTM_loss = F.binary_cross_entropy_with_logits(input=self.ext_output,target=y)
+		self.NTM_loss = F.binary_cross_entropy_with_logits(input=self.ext_output[-1],target=y)
 
 		# Sum :
 		self.total_loss = self.lambdaVAE * self.VAE_loss + self. lambdaNTM * self.NTM_loss 
