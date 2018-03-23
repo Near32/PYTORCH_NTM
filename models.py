@@ -204,7 +204,8 @@ class Encoder(nn.Module) :
 		self.fc = conv( 64, 64, 4, stride=1,pad=0, batchNorm=False)
 		# 12
 		#self.fc1 = nn.Linear(64 * (12**2), 128)
-		self.fc1 = nn.Linear(64 * (14**2), 128)
+		#self.fc1 = nn.Linear(64 * (14**2), 128)
+		self.fc1 = nn.Linear(1600, 128)
 		self.bn1 = nn.BatchNorm1d(128)
 		self.fc2 = nn.Linear(128, 64)
 		self.bn2 = nn.BatchNorm1d(64)
@@ -479,11 +480,11 @@ class BasicHeads(nn.Module) :
 		self.nbr_heads = nbr_heads
 		self.input_dim = input_dim
 		self.use_cuda = use_cuda
-
+		self.batch_dim=self.memory.batch_dim
 		self.is_read = is_read 
 
 		self.generate_ctrl2gate()
-		self.reset_prev_w(batch_dim=self.memory.batch_dim)
+		self.reset_prev_w()
 
 	def generate_ctrl2gate(self) :
 		if self.is_read is None :
@@ -498,12 +499,14 @@ class BasicHeads(nn.Module) :
 		
 		self.ctrl2head = nn.Linear(self.input_dim, self.nbr_heads * self.head_gate_dim )
 		
-	def reset_prev_w(self, batch_dim):
-		self.batch_dim = batch_dim
-		self.prev_w = Variable(torch.zeros(self.batch_dim, self.nbr_heads, self.memory.mem_nbr_slots))
+	def reset_prev_w(self):
 		if self.use_cuda :
-			self.prev_w = self.prev_w.cuda()
-
+			self.prev_w = Variable(torch.zeros(self.batch_dim, self.nbr_heads, self.memory.mem_nbr_slots)).cuda()
+		else :
+			self.prev_w = Variable(torch.zeros(self.batch_dim, self.nbr_heads, self.memory.mem_nbr_slots))
+			
+	def reset(self) :
+		self.reset_prev_w()
 
 	def write(self,ctlr_input) :
 		raise NotImplementedError
@@ -592,6 +595,9 @@ class NTMController(nn.Module) :
 		if self.use_cuda :
 			self = self.cuda()
 
+	def initialize_controller(self) :
+		self.init_controllerStates()
+		
 	def build_controller(self) :
 		# LSTMs Controller :
 		# input = ( x_t, y_{t-1}, r0_{t-1}, ..., rN_{t-1}) / rX = X-th vector read from the memory.
@@ -621,13 +627,15 @@ class NTMController(nn.Module) :
 		self.output_fn = nn.Sequential( *self.output_fn)
 
 	def init_controllerStates(self) :
-		self.ControllerStates = dict()
-		self.ControllerStates['prev_hc'] = Variable( torch.rand(self.batch_size,self.LSTMhidden_size) )
-
 		if self.use_cuda :
-			self.ControllerStates['prev_hc'] = self.ControllerStates['prev_hc'].cuda()
-
+			self.ControllerStates = (Variable( torch.zeros(self.nbr_layers,self.batch_size,self.LSTMhidden_size) ).cuda(), Variable( torch.zeros(self.nbr_layers,self.batch_size,self.LSTMhidden_size) ).cuda() )
+		else :
+			self.ControllerStates = (Variable( torch.zeros(self.nbr_layers,self.batch_size,self.LSTMhidden_size) ),Variable( torch.zeros(self.nbr_layers,self.batch_size,self.LSTMhidden_size) ) )
 	
+
+	def reset(self) :
+		self.init_controllerStates()
+
 	def forward_controller(self,x) :
 		# Input : batch x seq_len x input_dim
 		self.input = x['input']
@@ -641,65 +649,61 @@ class NTMController(nn.Module) :
 		# Controller States :
 		#	hidden states h_{t-1} : batch x nbr_layers x hidden_dim 
 		#	cell states c_{t-1} : batch x nbr_layers x hidden_dim 
-		prev_hc = self.ControllerStates['prev_hc']
+		prev_hc = self.ControllerStates
 
 
 		# Computations :
-		self.LSTMs_output, self.ControllerStates['prev_hc'] = self.LSTMs(ctrl_input, prev_hc)
-
-		return self.LSTMs_output, self.ControllerStates['prev_hc']
+		self.LSTMs_output, self.ControllerStates = self.LSTMs(ctrl_input, prev_hc)
+		
+		return self.LSTMs_output, self.ControllerStates
 
 	def forward_external_output_fn(self, ctrl_output, slots_read) :
-		ext_fc_inp = torch.cat( [ctrl_output, slots_read], dim=1)
+		ext_fc_inp = torch.cat( [ctrl_output, slots_read], dim=2).squeeze(1)
 		self.output_fn_output = self.output_fn(ext_fc_inp)
 		
 		return self.output_fn_output
 
 
 class NTMMemory(nn.Module) :
-	def __init__(self, mem_nbr_slots, mem_dim, use_cuda=True) :
+	def __init__(self, mem_nbr_slots, mem_dim, batch_dim, use_cuda=True) :
 		super(NTMMemory,self).__init__()
 
 		self.mem_nbr_slots = mem_nbr_slots
 		self.mem_dim = mem_dim
 		self.use_cuda = use_cuda
+		self.batch_dim = batch_dim
 
-		if self.use_cuda :
-			#self.register_buffer('init_mem', Variable(torch.Tensor(self.mem_nbr_slots,self.mem_dim)).cuda() )
-			self.init_mem = Variable(torch.Tensor(self.mem_nbr_slots,self.mem_dim)).cuda()
-		else :
-			#self.register_buffer('init_mem', Variable(torch.Tensor(self.mem_nbr_slots,self.mem_dim)) )
-			self.init_mem = Variable(torch.Tensor(self.mem_nbr_slots,self.mem_dim))
 		
 		self.initialize_memory()
 
 	def initialize_memory(self) :
-		dev = 1.0/np.sqrt(self.mem_dim+self.mem_nbr_slots)
-		nn.init.uniform( self.init_mem, -dev, dev)
-
-	def reset(self,batch_dim=1) :
-		self.batch_dim = batch_dim
-		self.memory = self.init_mem.clone().repeat(self.batch_dim,1,1)
-		
 		if self.use_cuda :
-			self.memory = self.memory.cuda()
+			self.init_mem = Variable(torch.zeros(self.mem_nbr_slots,self.mem_dim)).cuda()
+		else :
+			self.init_mem = Variable(torch.zeros(self.mem_nbr_slots,self.mem_dim))
+		
+		#dev = 1.0/np.sqrt(self.mem_dim+self.mem_nbr_slots)
+		#nn.init.uniform( self.init_mem, -dev, dev)
+		
+		#self.reset()
 
+	def reset(self) :
+		if self.use_cuda :
+			self.memory = self.init_mem.clone().repeat(self.batch_dim,1,1).cuda()
+		else :
+			self.memory = self.init_mem.clone().repeat(self.batch_dim,1,1)
+		
 		self.pmemory = self.memory
 
-	def content_addressing(k,beta) :
+	def content_addressing(self,k,beta) :
 		nbrHeads = k.size()[1]
 		eps = 1e-10
-		w = Variable(torch.Tensor(self.batch_dim, nbrHeads, self.mem_nbr_slots) )
-		if self.use_cuda :
-			w = w.cuda()
-
-		for bidx in range(self.batch_dim) :
-			for hidx in range(nbrHeads) :
-				for i in range(self.mem_nbr_slots) :
-					cossim = F.cosine_similarity( k[bidx][hidx], self.memory[bidx][i], dim=-1, eps=eps )
-					print('cossim:',cossim.size()) 
-					w[bidx][hidx][i] =  F.softmax( cossim, dim=0 )
-
+		
+		memory_bhSMidx = torch.cat([self.memory.unsqueeze(1)]*nbrHeads, dim=1)
+		kmat = torch.cat([k.unsqueeze(2)]*self.mem_nbr_slots, dim=2)
+		cossim = F.cosine_similarity( kmat, memory_bhSMidx, dim=3).view((self.batch_dim,nbrHeads,-1))
+		w = F.softmax( beta * cossim)
+		
 		return w 
 
 	def location_addressing(self, pw, wc,g,s,gamma) :
@@ -709,41 +713,38 @@ class NTMMemory(nn.Module) :
 		wg =  g*wc + (1-g)*pw
 
 		# Shift :
-		ws = Variable(torch.Tensor(self.batch_dim, nbrHeads, self.mem_nbr_slots) )
 		if self.use_cuda :
-			ws = ws.cuda()
-		for bidx in range(self.batch_dim) :
-			for hidx in range(nbrHeads) :
-				res = self._conv_shift(wg[bidx][hidx], s[bidx][hidx])
-				print('convshitf : ', res.size())
-				ws[bidx][hidx] = res
+			ws = Variable(torch.Tensor(self.batch_dim, nbrHeads, self.mem_nbr_slots) ).cuda()
+		else : 
+			ws = Variable(torch.Tensor(self.batch_dim, nbrHeads, self.mem_nbr_slots) )
+			
+		for hidx in range(nbrHeads) :
+			res = self._conv_shift(wg[:,hidx], s[:,hidx])
+			ws[:,hidx] = res
 		
 		# Sharpening :
-		w = Variable(torch.Tensor(self.batch_dim, nbrHeads, self.mem_nbr_slots) )
-		if self.use_cuda :
-			w = w.cuda()
+		gamma_Sidx = torch.cat([gamma]*self.mem_nbr_slots, dim=2)
+		wgam = ws ** gamma_Sidx
+		sumw = torch.sum( wgam, dim=2 )
+		w = wgam / sumw
 		
-		for bidx in range(self.batch_dim) :
-			for hidx in range(nbrHeads) :
-				wgam = ws[bidx][hidx] ** gamma[bidx][hidx]
-				sumw = torch.sum( wgam )
-				print('wgam :',wgam.size())
-				print('sumw :', sumw.size())
-				w[bidx][hidx] = wgam / sumw
-
 		return w		
 
-	def _conv_shitf(self,wg,s) :
+	def _conv_shift(self,wg,s) :
 		size = s.size()[1]
-		c = torch.cat([wg[-size+1:], wg, wg[:size-1]])
+		seq_len = wg.size()[1]
+		
+		c = torch.cat([wg[-size+1:], wg, wg[:size-1]], dim=1).unsqueeze(1)
+		s = s.unsqueeze(1)
 		res = F.conv1d( c, s)
-		return res[1:-1]
-
+		
+		ret = res[:,:,1:seq_len+1].squeeze(1)
+		
+		return ret 
+	
 	def write(self, w, erase, add) :
 		self.pmemory = self.memory
-		self.memory = Variable(torch.Tensor(self.batch_dim,self.mem_nbr_slots,self.mem_dim))
-		if self.use_cuda :
-			self.memory = self.memory.cuda()
+		
 		for bidx in range(self.batch_dim) :
 			for headidx in range(erase.size()[1]) :
 				e = torch.ger(w[bidx][headidx], erase[bidx][headidx])
@@ -752,12 +753,15 @@ class NTMMemory(nn.Module) :
 
 	def read(self, w) :
 		nbrHeads = w.size()[1]
-		self.reading_t = Variable(torch.Tensor(self.batch_dim,nbrHeads,self.mem_dim))
 		if self.use_cuda :
-			self.reading_t = self.reading_t.cuda()
-		for bidx in range(self.batch_size) :
-			for headidx in range(nbrHeads) :
-				self.reading_t[bidx][headidx] = w[bidx][headidx] * self.memory[bidx] 
+			self.reading_t = Variable(torch.zeros(self.batch_dim,nbrHeads,self.mem_dim)).cuda()
+		else :
+			self.reading_t = Variable(torch.zeros(self.batch_dim,nbrHeads,self.mem_dim))
+			
+		for headidx in range(nbrHeads) :
+			w = w[:,headidx]
+			for i in range(self.mem_dim) :
+				self.reading_t[:,headidx] = self.reading_t[:,headidx] + w[:,i] * self.memory[:,i] 
 			 
 		return self.reading_t
 
@@ -796,13 +800,13 @@ class NTM(nn.Module) :
 			self = self.cuda()
 
 	def build_memory(self) :
-		self.memory = NTMMemory(mem_nbr_slots=self.mem_nbr_slots,mem_dim=self.mem_dim)
-		self.memory.reset(batch_dim=self.batch_size)
-
+		self.memory = NTMMemory(mem_nbr_slots=self.mem_nbr_slots,mem_dim=self.mem_dim,batch_dim=self.batch_size)
+		
 	def build_controller(self) :
 		self.controller = NTMController( input_dim=self.input_dim, 
 											hidden_dim=self.hidden_dim, 
 											output_dim=self.output_dim, 
+											batch_size=self.batch_size,
 											nbr_layers=self.nbr_layers, 
 											mem_nbr_slots=self.mem_nbr_slots, 
 											mem_dim=self.mem_dim, 
@@ -815,18 +819,24 @@ class NTM(nn.Module) :
 									nbr_heads=self.nbr_read_heads, 
 									input_dim=self.hidden_dim, 
 									use_cuda=self.use_cuda)
+		
 		self.writeHeads = WriteHeads(memory=self.memory,
 										nbr_heads=self.nbr_write_heads, 
 										input_dim=self.hidden_dim, 
 										use_cuda=self.use_cuda)	
 
-
+	def reset_read_outputs(self) :
+		if self.use_cuda :
+			self.read_outputs = Variable(torch.zeros(self.batch_size,1,self.nbr_read_heads*self.mem_dim)).cuda()
+		else :
+			self.read_outputs = Variable(torch.zeros(self.batch_size,1,self.nbr_read_heads*self.mem_dim))
+			
 	def forward(self,x) :
 		# NTM_input :
 		# 'input' : batch_dim x seq_len x self.input_dim
 		# 'prev_desired_output' : batch_dim x seq_len x self.output_dim
 		# 'prev_read_vec' : batch_dim x seq_len x self.nbr_read_head * self.mem_dim
-		x['prev_read_vec'] = self.read_outputs.unsqueeze(1)
+		x['prev_read_vec'] = self.read_outputs
 
 		# Controller Outputs :
 		# output : batch_dim x hidden_dim
@@ -836,10 +846,10 @@ class NTM(nn.Module) :
 		# Memory Read :
 		# TODO : verify dim :
 		# batch_dim x nbr_read_heads * mem_dim :
-		self.read_outputs = self.readHeads(self.controller_output)
-
+		self.read_outputs = self.readHeads.read(self.controller_output)
+		
 		# Memory Write :
-		self.writeHeads(self.controller_output)
+		self.writeHeads.write(self.controller_output)
 
 		# External Output Function :
 		self.ext_output = self.controller.forward_external_output_fn(self.controller_output, self.read_outputs)
@@ -847,7 +857,11 @@ class NTM(nn.Module) :
 		return self.ext_output 
 
 	def reset(self) :
-		self.controller.init_controllerStates()
+		self.controller.reset()
+		self.memory.reset()
+		self.reset_read_outputs()
+		self.readHeads.reset()
+		self.writeHeads.reset()
 
 
 	def save(self,path) :
@@ -899,7 +913,7 @@ class betaVAE_NTM(nn.Module) :
 						mem_dim= NTMmem_dim, 
 						nbr_read_heads=NTMnbr_read_heads, 
 						nbr_write_heads=NTMnbr_write_heads, 
-						batch_size=32,
+						batch_size=batch_size,
 						use_cuda=use_cuda)
 		self.betaVAE = betaVAE(beta=beta,
 								net_depth=net_depth,
@@ -916,11 +930,14 @@ class betaVAE_NTM(nn.Module) :
 		self.NTM_input = None
 		self.ext_output = None
 
-		self.lambdaVAE = 1.0
+		self.lambdaVAE = 1e-5
 		self.lambdaNTM = 1.0 
 		self.VAE_loss = None
 		self.NTM_loss = None 
 		self.total_loss = None  
+
+	def reset(self) :
+		self.NTM.reset()
 
 	def forward(self,x,target) :
 		self.VAE_output, self.mu, self.log_var = self.betaVAE.forward(x)
@@ -956,7 +973,7 @@ class betaVAE_NTM(nn.Module) :
 		self.NTM_loss = F.binary_cross_entropy_with_logits(input=self.ext_output,target=y)
 
 		# Sum :
-		self.total_loss = self.lambdaVAE * self.VAE_loss, + self. lambdaNTM * self.NTM_loss 
+		self.total_loss = self.lambdaVAE * self.VAE_loss + self. lambdaNTM * self.NTM_loss 
 
 		return self.total_loss, self.VAE_loss, self.NTM_loss
 

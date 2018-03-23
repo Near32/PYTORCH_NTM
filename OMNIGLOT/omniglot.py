@@ -6,7 +6,7 @@ import random
 import torch
 import torch.utils.data as data
 from torchvision import transforms
-from utils import download_url, check_integrity, list_dir, list_files
+from .utils import download_url, check_integrity, list_dir, list_files
 import numpy as np
 import cv2 
 from collections import OrderedDict
@@ -247,7 +247,7 @@ class Omniglot(data.Dataset):
         return seq, nbrChar, nbrSamples+1  
 
 
-    def getSample(self, alphabet_idx, character_idx, sample_idx) :
+    def getSample(self, alphabet_idx, character_idx, sample_idx,nbrChar=50) :
         image_path, character_class, idxa = self.sampleSample4Character4Alphabet( alphabet_idx, character_idx, sample_idx)
         #image = Image.open(image_path, mode='r').convert('L')
         image = cv2.imread(image_path)
@@ -255,7 +255,7 @@ class Omniglot(data.Dataset):
         image = np.ascontiguousarray(image)
         image = cv2.resize( image, (self.h, self.w) )
 
-        sample = {'image':image, 'label':np.array(character_class)}
+        sample = {'image':image, 'label':onehotencoded(character_class, nbrClass=nbrChar)}
         if self.transform is not None :
             sample = self.transform(sample)
         
