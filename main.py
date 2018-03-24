@@ -101,6 +101,9 @@ def setting(args) :
 													shuffle=True)
 		train_VAE(betavae=betaVAENTM.betaVAE, data_loader=data_loader, optimizer=optimizer, path=path,SAVE_PATH=SAVE_PATH, nbr_epoch=args.epoch,batch_size=args.batch_size,offset=args.offset)
 		
+		train_model(betaVAENTM,dataset, optimizer, SAVE_PATH, path, args,nbr_epoch=200,batch_size=1,offset=args.offset)
+	
+	
 	if args.query :
 		data_loader = torch.utils.data.DataLoader(dataset=dataset,
 													batch_size=batch_size, 
