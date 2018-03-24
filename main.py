@@ -61,7 +61,7 @@ def setting(args) :
 	print(betaVAENTM)
 		
 	# LOADING :
-	path = 'Omniglot--img{}-lr{}-conv{}-out{}'.format(img_dim,lr,conv_dim,args.nbr_character)
+	path = 'Omniglot--img{}-lr{}-beta{}-layers{}-z{}-conv{}-out{}'.format(img_dim,lr,beta,net_depth,latent_dim,conv_dim,args.nbr_character)
 	
 	if not os.path.exists( './data/{}/'.format(path) ) :
 		os.mkdir('./data/{}/'.format(path))
