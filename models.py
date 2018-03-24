@@ -771,7 +771,7 @@ class NTMMemory(nn.Module) :
 				nmemory[bidx] = self.memory[-1][bidx]*(1-e)+a 
 
 		self.memory.append(nmemory)
-		
+
 	def read(self, w) :
 		nbrHeads = w.size()[1]
 		
@@ -1005,13 +1005,27 @@ class betaVAE_NTM(nn.Module) :
 		self.NTM.reset()
 
 	def save(self,path) :
-		self.NTM.save(path)
-		self.betaVAE.save(path)
+		try :
+			self.NTM.save(path)
+		except Exception as e :
+			print(e)
+
+		try :	
+			self.betaVAE.save(path)
+		except Exception as e :
+			print(e)
 
 	def load(self,path) :
-		self.NTM.load(path)
-		self.betaVAE.load(path)
+		try :
+			self.NTM.load(path)
+		except Exception as e :
+			print(e)
 
+		try :
+			self.betaVAE.load(path)
+		except Exception as e :
+			print(e)
+			
 
 def test() :
 	latent_dim = 10 
