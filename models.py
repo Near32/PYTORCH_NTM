@@ -746,6 +746,7 @@ class NTMMemory(nn.Module) :
 		return ret 
 	
 	def write(self, w, erase, add) :
+		'''
 		nmemory = torch.zeros(self.memory[-1].size() )
 		if self.use_cuda : nmemory = nmemory.cuda()
 
@@ -759,7 +760,18 @@ class NTMMemory(nn.Module) :
 			self.memory.append( Variable(nmemory).cuda())
 		else :
 			self.memory.append( Variable(nmemory) )
+		'''
+		nmemory =Variable(torch.zeros(self.memory[-1].size() ) )
+		if self.use_cuda : nmemory = nmemory.cuda()
 
+		for bidx in range(self.batch_dim) :
+			for headidx in range(erase.size()[1]) :
+				e = torch.ger(w[bidx][headidx], erase[bidx][headidx])
+				a = torch.ger(w[bidx][headidx], add[bidx][headidx])
+				nmemory[bidx] = self.memory[-1][bidx]*(1-e)+a 
+
+		self.memory.append(nmemory)
+		
 	def read(self, w) :
 		nbrHeads = w.size()[1]
 		

@@ -212,18 +212,24 @@ class Omniglot(data.Dataset):
             nbr of samples in the whole task.
         '''
         samples, nbrChar, nbrSamples = self.generateIterFewShotLearningTask(alphabet_idx=alphabet_idx,max_nbr_char=max_nbr_char)
+        idx2rand =  [ i for i in range(nbrChar)]
+        random.shuffle(idx2rand)
+
         seq = list()
         for i in range(nbrSamples) :
             d = dict()
             if i== 0 :
                 x = samples[0]
-                y = -1
+                y = 1
                 label = samples[0]['character']
             else :
                 x = samples[i]
                 y = samples[i-1]['character']
                 label = samples[i]['character']
             
+            y= idx2rand[y]
+            label = idx2rand[label]
+
             d.update(x)
             
             dy = dict()
@@ -236,8 +242,10 @@ class Omniglot(data.Dataset):
             seq.append( d )
         
         # last sample's target regularization :
+        y = samples[nbrSamples-1]['character']
+        y = idx2rand[y]
         dy = dict()
-        dy['target'] = onehotencoded(samples[nbrSamples-1]['character'], nbrClass=nbrChar)
+        dy['target'] = onehotencoded( y, nbrClass=nbrChar)
         d = dict()
         d.update(samples[0])
         d.update(dy)
@@ -298,6 +306,7 @@ class Omniglot(data.Dataset):
         """
         image_name, character_class = self._flat_character_images[index]
         image_path = join(self.target_folder, self._characters[character_class], image_name)
+        '''
         image = Image.open(image_path, mode='r').convert('L')
 
         if self.transform:
@@ -307,6 +316,21 @@ class Omniglot(data.Dataset):
             character_class = self.target_transform(character_class)
 
         return image, character_class
+        '''
+        image = cv2.imread(image_path)
+        h,w,c = image.shape 
+        image = np.ascontiguousarray(image)
+        image = cv2.resize( image, (self.h, self.w) )
+
+        path2char = join(self.target_folder, self._characters[character_class])
+        path2alphabet = path2char[:-11]
+        nbrChar = 100#len(list_dir(path2alphabet))
+        character_idx = int(path2char[-2:])
+        sample = {'image':image, 'label':onehotencoded(character_idx, nbrClass=nbrChar)}
+        if self.transform is not None :
+            sample = self.transform(sample)
+        
+        return sample
 
     def _check_integrity(self):
         zip_filename = self._get_target_folder()
