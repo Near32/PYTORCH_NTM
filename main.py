@@ -11,6 +11,7 @@ from scipy.io import loadmat
 from scipy.misc import imresize, imsave
 
 import numpy as np
+import cv2
 
 import math
 from PIL import Image
@@ -92,6 +93,9 @@ def setting(args) :
 	optimizer = torch.optim.Adam( betaVAENTM.parameters(), lr=lr)
 	#optimizer = torch.optim.Adagrad( betaVAENTM.parameters(), lr=lr)
 	
+	if args.test :
+		test_model(betaVAENTM,dataset, SAVE_PATH, path, args,nbr_epoch=args.epoch,batch_size=args.batch_size,offset=args.offset)
+	
 	if args.train :
 		train_model(betaVAENTM,dataset, optimizer, SAVE_PATH, path, args,nbr_epoch=args.epoch,batch_size=args.batch_size,offset=args.offset)
 	
@@ -103,18 +107,104 @@ def setting(args) :
 		
 		train_model(betaVAENTM,dataset, optimizer, SAVE_PATH, path, args,nbr_epoch=200,batch_size=1,offset=args.offset)
 	
-	
+
 	if args.query :
 		data_loader = torch.utils.data.DataLoader(dataset=dataset,
 													batch_size=batch_size, 
 													shuffle=True)
 		query(betaVAENTM,data_loader, path, args)
 
+
+def show(image,label,output) :
+	img = image.squeeze(0).cpu().data.numpy().transpose(1,2,0)
+	out = output[0]#output.cpu().data.numpy()[0]
+	l = label[0]#label.cpu().data.numpy()[0]
+	
+	while True :
+		cv2.imshow('visualization : output {} //label {}'.format(out,l), img)
+		key =cv2.waitKey(30) & 0xFF
+		if key == ord('n') :
+			break
+
+	cv2.destroyAllWindows()
+
 		
+def test_model(betaVAENTM,dataset, SAVE_PATH,path,args,nbr_epoch=100,batch_size=32, offset=0, stacking=False) :
+	global use_cuda
+	
+	betaVAENTM.eval()
+	
+	best_loss = None
+	best_model_wts = betaVAENTM.state_dict()
+	
+	for epoch in range(nbr_epoch):	
+		epoch_loss = 0.0
+		
+		nbr_task_alphabet = dataset.nbrAlphabets()
+		
+		
+		for task_alphabet_idx in range(nbr_task_alphabet) :
+			betaVAENTM.reset()
+			
+			task, nbrCharacter4Task, nbrSample4Task = dataset.generateIterFewShotInputSequence( alphabet_idx=task_alphabet_idx,max_nbr_char=args.nbr_character)
+
+			var_task_loss = 0.0
+
+			prev_label = torch.zeros(nbrCharacter4Task).float()
+			prev_label[np.random.randint(nbrCharacter4Task)] = 1 
+
+			cum_latent_acc = 0.0
+			iteration_latent = 0
+				
+
+			for idx_sample in range(nbrSample4Task):
+				sample = dataset.getSample( task[idx_sample]['alphabet'], task[idx_sample]['character'], task[idx_sample]['sample'], nbrChar=args.nbr_character )
+				
+				image = sample['image'].float()
+				target = prev_label#sample['target'].float()
+				label = sample['label'].float()
+				prev_label = label 
+
+				image = Variable( image, volatile=False ).unsqueeze(0)
+				target = Variable( target, volatile=False ).unsqueeze(0)
+				label = Variable( label, volatile=False ).unsqueeze(0)
+
+				if use_cuda :
+					image = image.cuda() 
+					label = label.cuda() 
+					target = target.cuda() 
+
+				total_loss, VAE_loss, NTM_loss = betaVAENTM.compute_losses(x=image,y=label,target=target)
+				
+				output = betaVAENTM.ext_output[-1]
+				# Accuracy :
+				out_idx = output.cpu().data.max(1)[1]
+				l_idx = label.cpu().data.max(1)[1]
+				acc = (out_idx == l_idx)
+				acc = acc.numpy().mean()*100.0
+				cum_latent_acc = (cum_latent_acc*iteration_latent + acc)/(iteration_latent+1)
+				iteration_latent += 1
+				print('Accuracy : {} %.'.format(cum_latent_acc))
+
+				var_task_loss = var_task_loss + total_loss
+				epoch_loss += total_loss.cpu().data[0]
+
+				show(image,l_idx,out_idx)
+
+				if idx_sample % 10 == 0:
+				    print ("Epoch[%d/%d], Step [%d/%d], Total Loss: %.4f, "
+				           "Reconst Loss: %.4f // KL Div: %.7f, E[ |~| p(x|theta)]: %.7f " 
+				           %(epoch+1, nbr_epoch, idx_sample+1, nbrSample4Task, total_loss.data[0], 
+				             VAE_loss.data[0], betaVAENTM.kl_divergence.data[0], betaVAENTM.expected_log_lik.exp().data[0]) )
+				    if best_loss is not None :
+				    	print("Epoch Loss : {} / Best : {}".format(epoch_loss, best_loss))
+
 
 def train_model(betaVAENTM,dataset, optimizer, SAVE_PATH,path,args,nbr_epoch=100,batch_size=32, offset=0, stacking=False) :
 	global use_cuda
 	
+	betaVAENTM.betaVAE.eval()
+
 	best_loss = None
 	best_model_wts = betaVAENTM.state_dict()
 	
@@ -460,6 +550,7 @@ def query(model,data_loader,path,args):
 if __name__ == '__main__' :
 	import argparse
 	parser = argparse.ArgumentParser(description='Neural Turing Machine - Omniglot')
+	parser.add_argument('--test',action='store_true',default=False)
 	parser.add_argument('--train',action='store_true',default=False)
 	parser.add_argument('--trainVAE',action='store_true',default=False)
 	parser.add_argument('--query',action='store_true',default=False)
