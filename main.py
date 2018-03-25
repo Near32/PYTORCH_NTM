@@ -11,6 +11,7 @@ from scipy.io import loadmat
 from scipy.misc import imresize, imsave
 
 import numpy as np
+import cv2
 
 import math
 from PIL import Image
@@ -113,6 +114,20 @@ def setting(args) :
 													shuffle=True)
 		query(betaVAENTM,data_loader, path, args)
 
+
+def show(image,label,output) :
+	img = image.squeeze(0).cpu().data.numpy().transpose(1,2,0)
+	out = output[0]#output.cpu().data.numpy()[0]
+	l = label[0]#label.cpu().data.numpy()[0]
+	
+	while True :
+		cv2.imshow('visualization : output {} //label {}'.format(out,l), img)
+		key =cv2.waitKey(30) & 0xFF
+		if key == ord('n') :
+			break
+
+	cv2.destroyAllWindows()
+
 		
 def test_model(betaVAENTM,dataset, SAVE_PATH,path,args,nbr_epoch=100,batch_size=32, offset=0, stacking=False) :
 	global use_cuda
@@ -163,7 +178,9 @@ def test_model(betaVAENTM,dataset, SAVE_PATH,path,args,nbr_epoch=100,batch_size=
 				
 				output = betaVAENTM.ext_output[-1]
 				# Accuracy :
-				acc = (output.cpu().data.max(1)[1] == label.cpu().data.max(1)[1])
+				out_idx = output.cpu().data.max(1)[1]
+				l_idx = label.cpu().data.max(1)[1]
+				acc = (out_idx == l_idx)
 				acc = acc.numpy().mean()*100.0
 				cum_latent_acc = (cum_latent_acc*iteration_latent + acc)/(iteration_latent+1)
 				iteration_latent += 1
@@ -172,7 +189,7 @@ def test_model(betaVAENTM,dataset, SAVE_PATH,path,args,nbr_epoch=100,batch_size=
 				var_task_loss = var_task_loss + total_loss
 				epoch_loss += total_loss.cpu().data[0]
 
-				
+				show(image,l_idx,out_idx)
 
 				if idx_sample % 10 == 0:
 				    print ("Epoch[%d/%d], Step [%d/%d], Total Loss: %.4f, "
