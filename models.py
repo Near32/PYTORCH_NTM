@@ -340,7 +340,10 @@ class STNbasedEncoder(STNbasedNet) :
 		self.fc = conv( 64, 64, 4, stride=1,pad=0, batchNorm=False)
 		# 12
 		#self.fc1 = nn.Linear(64 * (12**2), 128)
-		self.fc1 = nn.Linear(64 * (14**2), 128)
+		#self.fc1 = nn.Linear(64 * (14**2), 128)
+		# 120 :
+		self.fc1 = nn.Linear(1600, 128)
+		# 240 :self.fc1 = nn.Linear(10816, 128)
 		self.bn1 = nn.BatchNorm1d(128)
 		self.fc2 = nn.Linear(128, 64)
 		self.bn2 = nn.BatchNorm1d(64)
