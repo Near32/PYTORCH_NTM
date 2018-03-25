@@ -103,7 +103,7 @@ def setting(args) :
 		
 		train_model(betaVAENTM,dataset, optimizer, SAVE_PATH, path, args,nbr_epoch=200,batch_size=1,offset=args.offset)
 	
-	
+
 	if args.query :
 		data_loader = torch.utils.data.DataLoader(dataset=dataset,
 													batch_size=batch_size, 
@@ -114,6 +114,8 @@ def setting(args) :
 
 def train_model(betaVAENTM,dataset, optimizer, SAVE_PATH,path,args,nbr_epoch=100,batch_size=32, offset=0, stacking=False) :
 	global use_cuda
+	
+	betaVAENTM.betaVAE.eval()
 	
 	best_loss = None
 	best_model_wts = betaVAENTM.state_dict()
