@@ -342,8 +342,9 @@ class STNbasedEncoder(STNbasedNet) :
 		#self.fc1 = nn.Linear(64 * (12**2), 128)
 		#self.fc1 = nn.Linear(64 * (14**2), 128)
 		# 120 :
-		self.fc1 = nn.Linear(1600, 128)
-		# 240 :self.fc1 = nn.Linear(10816, 128)
+		#self.fc1 = nn.Linear(1600, 128)
+		# 240 :
+		self.fc1 = nn.Linear(10816, 128)
 		self.bn1 = nn.BatchNorm1d(128)
 		self.fc2 = nn.Linear(128, 64)
 		self.bn2 = nn.BatchNorm1d(64)
@@ -446,7 +447,7 @@ class STNbasedBetaVAE(nn.Module) :
 		print('Encoder loaded from : {}'.format(encpath) )
 		
 		# Decoder :
-		encpath = path + 'Decoder.weights'
+		decpath = path + 'Decoder.weights'
 		self.decoder.load_state_dict( torch.load( decpath ) )
 		print('Decoder loaded from : {}'.format(decpath) )
 		
