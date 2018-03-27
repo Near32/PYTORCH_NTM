@@ -145,7 +145,7 @@ class Decoder(nn.Module) :
 		
 		self.net_depth = net_depth
 		self.dcs = []
-		outd = conv_dim*(2**self.net_depth)
+		outd = conv_dim#*(2**self.net_depth)
 		ind= z_dim
 		k = 4
 		dim = k
@@ -155,10 +155,11 @@ class Decoder(nn.Module) :
 		
 		for i in reversed(range(self.net_depth)) :
 			ind = outd
-			outd = conv_dim*(2**i)
+			outd = conv_dim#*(2**i)
 			self.dcs.append( deconv( ind, outd,k,stride=stride,pad=pad) )
 			self.dcs.append( nn.LeakyReLU(0.05) )
 			dim = k-2*pad + stride*(dim-1)
+			print(dim)
 		self.dcs = nn.Sequential( *self.dcs) 
 			
 		ind = outd
@@ -344,7 +345,9 @@ class STNbasedEncoder(STNbasedNet) :
 		# 120 :
 		#self.fc1 = nn.Linear(1600, 128)
 		# 240 :
-		self.fc1 = nn.Linear(10816, 128)
+		#self.fc1 = nn.Linear(10816, 128)
+		# 256 :
+		self.fc1 = nn.Linear(12544, 128)
 		self.bn1 = nn.BatchNorm1d(128)
 		self.fc2 = nn.Linear(128, 64)
 		self.bn2 = nn.BatchNorm1d(64)
