@@ -347,7 +347,8 @@ class STNbasedEncoder(STNbasedNet) :
 		# 240 :
 		#self.fc1 = nn.Linear(10816, 128)
 		# 256 :
-		self.fc1 = nn.Linear(12544, 128)
+		#self.fc1 = nn.Linear(12544, 128)
+		self.fc1 = nn.Linear(1600, 128)
 		self.bn1 = nn.BatchNorm1d(128)
 		self.fc2 = nn.Linear(128, 64)
 		self.bn2 = nn.BatchNorm1d(64)
@@ -414,12 +415,12 @@ class STNbasedBetaVAE(nn.Module) :
 		return z
 
 	def forward(self,x) :
-		h = self.encoder( x)
-		mu, log_var = torch.chunk(h, 2, dim=1 )
-		z = self.reparameterize( mu,log_var)
-		out = self.decoder(z)
+		self.h = self.encoder( x)
+		self.mu, self.log_var = torch.chunk(self.h, 2, dim=1 )
+		self.z = self.reparameterize( self.mu,self.log_var)
+		self.out = self.decoder(self.z)
 
-		return out, mu, log_var
+		return self.out, self.mu, self.log_var
 
 	def encode(self,x) :
 		h = self.encoder( x)
@@ -653,6 +654,7 @@ class NTMController(nn.Module) :
 		# Previously read vector from the memory : batch x seq_len x nbr_read_head * mem_dim
 		self.prev_read_vec = x['prev_read_vec']
 
+		#print(self.input.size(), self.prev_desired_output.size(), self.prev_read_vec.size())
 		ctrl_input = torch.cat( [self.input, self.prev_desired_output, self.prev_read_vec], dim=2)
 		
 		# Controller States :
