@@ -45,14 +45,15 @@ def deconv( sin, sout,k,stride=2,pad=1,batchNorm=True) :
 	return nn.Sequential( *layers )
 
 class STNbasedNet(nn.Module):
-    def __init__(self, input_dim=256, input_depth=1, nbr_stn=2, stn_stack_input=True):
+    def __init__(self, input_dim=256, input_depth=1, nbr_stn=2, stn_stack_input=True, use_cuda=True):
         super(STNbasedNet, self).__init__()
 
         self.input_dim = input_dim
         self.input_depth = input_depth
         self.nbr_stn = nbr_stn
         self.stn_stack_input=stn_stack_input
-
+        self.use_cuda = use_cuda
+        
         # Spatial transformer localization-network
         stnloc = []
         dim = self.input_dim
@@ -87,16 +88,22 @@ class STNbasedNet(nn.Module):
             nn.Linear(128, self.nbr_stn * 2 * 2)
         )
 
-        # Initialize the weights/bias with identity transformation
+        self.resetSTN()
+
+    def resetSTN(self) :
+    	# Initialize the weights/bias with identity transformation
         self.fc_loc[2].weight.data.fill_(0)
         #self.fc_loc[2].weight.data += torch.rand( self.fc_loc[2].weight.size() ) * 1e-10
         #init_bias = torch.FloatTensor( [1.0, 0, 0.0, 0, 1.0, 0.0]).view((1,-1))
         init_bias = torch.FloatTensor( [0.25, 0, 0.25, 0] ).view((1,-1))
+        if self.use_cuda : init_bias = init_bias.cuda()
+
         for i in range(self.nbr_stn-1 ) :
         	#r = torch.rand( (1,6)) * 1e-10
         	r = torch.rand( (1,4)) * 1e-10
         	#ib = torch.FloatTensor( [0.5, 0, 0.0, 0, 0.5, 0.0]).view((1,-1))
         	ib = torch.FloatTensor( [0.5, 0, 0.5, 0]).view((1,-1))
+        	if self.use_cuda : ib = ib.cuda()
         	#ib += r
         	init_bias = torch.cat( [init_bias, ib], dim=0)
         self.fc_loc[2].bias.data = init_bias.view((-1))
@@ -347,8 +354,8 @@ class STNbasedEncoder(STNbasedNet) :
 		# 240 :
 		#self.fc1 = nn.Linear(10816, 128)
 		# 256 :
-		#self.fc1 = nn.Linear(12544, 128)
-		self.fc1 = nn.Linear(1600, 128)
+		self.fc1 = nn.Linear(12544, 128)
+		#self.fc1 = nn.Linear(1600, 128)
 		self.bn1 = nn.BatchNorm1d(128)
 		self.fc2 = nn.Linear(128, 64)
 		self.bn2 = nn.BatchNorm1d(64)
@@ -390,9 +397,9 @@ class STNbasedEncoder(STNbasedNet) :
 
 
 class STNbasedBetaVAE(nn.Module) :
-	def __init__(self, beta=1.0,net_depth=4,img_dim=224, z_dim=32, conv_dim=64, use_cuda=True, img_depth=3) :
+	def __init__(self, beta=1.0,net_depth=4,img_dim=224, z_dim=32, conv_dim=64, use_cuda=True, img_depth=3,stn_stack_input=True) :
 		super(STNbasedBetaVAE,self).__init__()
-		self.encoder = STNbasedEncoder(z_dim=2*z_dim, img_depth=img_depth, img_dim=img_dim, conv_dim=conv_dim,net_depth=net_depth)
+		self.encoder = STNbasedEncoder(z_dim=2*z_dim, img_depth=img_depth, img_dim=img_dim, conv_dim=conv_dim,net_depth=net_depth, stn_stack_input=stn_stack_input)
 		self.decoder = Decoder(z_dim=z_dim, img_dim=img_dim, img_depth=img_depth, net_depth=net_depth)
 
 		self.z_dim = z_dim
@@ -404,6 +411,9 @@ class STNbasedBetaVAE(nn.Module) :
 
 		if self.use_cuda :
 			self = self.cuda()
+
+	def resetSTN(self) :
+		self.encoder.resetSTN()
 
 	def reparameterize(self, mu,log_var) :
 		eps = torch.randn( (mu.size()[0], mu.size()[1]) )
@@ -581,7 +591,8 @@ class NTMController(nn.Module) :
 						mem_nbr_slots=128, 
 						mem_dim= 32, 
 						nbr_read_heads=1, 
-						nbr_write_heads=1, 
+						nbr_write_heads=1,
+						classification=True, 
 						use_cuda=True) :
 
 		super(NTMController,self).__init__()
@@ -595,6 +606,7 @@ class NTMController(nn.Module) :
 		self.mem_dim = mem_dim
 		self.nbr_read_heads = nbr_read_heads
 		self.nbr_write_heads = nbr_write_heads
+		self.classification = classification
 		self.use_cuda = use_cuda
 
 		self.build_controller()
@@ -630,8 +642,10 @@ class NTMController(nn.Module) :
 		# input = (h_t, r0_{t}, ..., rN_{t})
 		self.EXTinput_size = self.LSTMhidden_size + self.mem_dim * self.nbr_read_heads
 		self.output_fn.append( nn.Linear(self.EXTinput_size, self.output_dim))
-		#self.output_fn.append( nn.Tanh())
-		self.output_fn.append( nn.Softmax())
+		if self.classification :
+			self.output_fn.append( nn.Softmax())
+		else :
+			self.output_fn.append( nn.Tanh())
 		self.output_fn = nn.Sequential( *self.output_fn)
 
 	def init_controllerStates(self) :
@@ -800,6 +814,7 @@ class NTM(nn.Module) :
 						nbr_read_heads=1, 
 						nbr_write_heads=1, 
 						batch_size=32,
+						classification=True,
 						use_cuda=True) :
 
 		super(NTM,self).__init__()
@@ -813,6 +828,7 @@ class NTM(nn.Module) :
 		self.nbr_read_heads = nbr_read_heads
 		self.nbr_write_heads = nbr_write_heads
 		self.batch_size = batch_size
+		self.classification = classification
 		self.use_cuda = use_cuda
 
 		self.build_memory()
@@ -835,7 +851,8 @@ class NTM(nn.Module) :
 											mem_nbr_slots=self.mem_nbr_slots, 
 											mem_dim=self.mem_dim, 
 											nbr_read_heads=self.nbr_read_heads, 
-											nbr_write_heads=self.nbr_write_heads, 
+											nbr_write_heads=self.nbr_write_heads,
+											classification=self.classification, 
 											use_cuda=self.use_cuda)
 
 	def build_heads(self) :
@@ -931,7 +948,7 @@ class NTM(nn.Module) :
 class betaVAE_NTM(nn.Module) :
 	def __init__(self, latent_dim, NTMhidden_dim=512, NTMoutput_dim=32, NTMnbr_layers=1, NTMmem_nbr_slots=128, NTMmem_dim= 32, 
 						NTMnbr_read_heads=1, NTMnbr_write_heads=1, batch_size=32,
-						beta=1.0,net_depth=4,img_dim=224, conv_dim=64, use_cuda=True, img_depth=1) :
+						beta=1.0,net_depth=4,img_dim=224, conv_dim=64, use_cuda=True, img_depth=1, classification=True) :
 		super(betaVAE_NTM,self).__init__()
 
 		self.NTM = NTM(input_dim=latent_dim, 
@@ -943,6 +960,7 @@ class betaVAE_NTM(nn.Module) :
 						nbr_read_heads=NTMnbr_read_heads, 
 						nbr_write_heads=NTMnbr_write_heads, 
 						batch_size=batch_size,
+						classification=classification,
 						use_cuda=use_cuda)
 		self.betaVAE = betaVAE(beta=beta,
 								net_depth=net_depth,
