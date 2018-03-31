@@ -333,19 +333,45 @@ class STNbasedEncoder(STNbasedNet) :
 			self.stn_output_depth += self.input_depth
 
 		# 224
-		self.cv1 = conv( self.stn_output_depth, 96, 11, batchNorm=False)
-		# 108/109 = E( (224-11+2*1)/2 ) + 1
+		dim = self.input_dim
+		pad = 1
+		stride = 2
+		k=7
+		sin=self.stn_output_depth
+		sout=96 
+		self.cv1 = conv( sin=sin, sout=sout, k=k, stride=stride,pad=pad, batchNorm=False)
 		self.d1 = nn.Dropout2d(p=0.8)
-		self.cv2 = conv( 96, 256, 5)
-		# 53 / 54
+		dim = floor( (dim-k+2*pad)/stride +1 )
+		pad = 1
+		stride = 2
+		k=5
+		sin=sout
+		sout=256 
+		self.cv2 = conv( sin=sin, sout=sout, k=k, stride=stride,pad=pad, batchNorm=False)
 		self.d2 = nn.Dropout2d(p=0.8)
-		self.cv3 = conv( 256, 384, 3)
-		# 27 / 27
+		dim = floor( (dim-k+2*pad)/stride +1 )
+		pad = 1
+		stride = 2
+		k=3
+		sin=sout
+		sout=384 
+		self.cv3 = conv( sin=sin, sout=sout, k=k, stride=stride,pad=pad, batchNorm=False)
 		self.d3 = nn.Dropout2d(p=0.5)
-		self.cv4 = conv( 384, 64, 1)
-		# 15
+		dim = floor( (dim-k+2*pad)/stride +1 )
+		pad = 1
+		stride = 2
+		k=1
+		sin=sout
+		sout=64 
+		self.cv4 = conv( sin=sin, sout=sout, k=k, stride=stride,pad=pad, batchNorm=False)
 		self.d4 = nn.Dropout2d(p=0.5)
-		self.fc = conv( 64, 64, 4, stride=1,pad=0, batchNorm=False)
+		dim = floor( (dim-k+2*pad)/stride +1 )
+		pad = 0
+		stride = 1
+		k=4
+		sin=sout
+		sout=sout 
+		self.fc = conv( sin=sin, sout=sout, k=k, stride=stride,pad=pad, batchNorm=False)
 		# 12
 		#self.fc1 = nn.Linear(64 * (12**2), 128)
 		#self.fc1 = nn.Linear(64 * (14**2), 128)
@@ -354,8 +380,14 @@ class STNbasedEncoder(STNbasedNet) :
 		# 240 :
 		#self.fc1 = nn.Linear(10816, 128)
 		# 256 :
-		self.fc1 = nn.Linear(12544, 128)
-		#self.fc1 = nn.Linear(1600, 128)
+		#self.fc1 = nn.Linear(12544, 128)
+		# 512 :
+		#self.fc1 = nn.Linear(57600, 128)
+		dim = floor( (dim-k+2*pad)/stride +1 )
+		pad = 0
+		stride = 1
+		k=7
+		self.fc1 = nn.Linear( 64 * (dim**2), 128)
 		self.bn1 = nn.BatchNorm1d(128)
 		self.fc2 = nn.Linear(128, 64)
 		self.bn2 = nn.BatchNorm1d(64)
@@ -397,9 +429,9 @@ class STNbasedEncoder(STNbasedNet) :
 
 
 class STNbasedBetaVAE(nn.Module) :
-	def __init__(self, beta=1.0,net_depth=4,img_dim=224, z_dim=32, conv_dim=64, use_cuda=True, img_depth=3,stn_stack_input=True) :
+	def __init__(self, beta=1.0,net_depth=4,img_dim=224, z_dim=32, conv_dim=64, use_cuda=True, img_depth=3,stn_stack_input=True, nbr_stn=2) :
 		super(STNbasedBetaVAE,self).__init__()
-		self.encoder = STNbasedEncoder(z_dim=2*z_dim, img_depth=img_depth, img_dim=img_dim, conv_dim=conv_dim,net_depth=net_depth, stn_stack_input=stn_stack_input)
+		self.encoder = STNbasedEncoder(z_dim=2*z_dim, img_depth=img_depth, img_dim=img_dim, conv_dim=conv_dim,net_depth=net_depth, stn_stack_input=stn_stack_input, nbr_stn=nbr_stn)
 		self.decoder = Decoder(z_dim=z_dim, img_dim=img_dim, img_depth=img_depth, net_depth=net_depth)
 
 		self.z_dim = z_dim
