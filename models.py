@@ -594,7 +594,7 @@ class BasicHeads(nn.Module) :
 
 class ReadHeads(BasicHeads) :
 	def __init__(self, memory, nbr_heads=1, input_dim=256, use_cuda=True) :
-		super(ReadHeads,self).__init__(memory=memory,input_dim=input_dim,nbr_heads=nbr_heads,is_read=True)
+		super(ReadHeads,self).__init__(memory=memory,input_dim=input_dim,nbr_heads=nbr_heads,is_read=True, use_cuda=use_cuda)
 
 		
 	def read(self, ctrl_input) :
@@ -606,7 +606,7 @@ class ReadHeads(BasicHeads) :
 
 class WriteHeads(BasicHeads) :
 	def __init__(self, memory, nbr_heads=1, input_dim=256, use_cuda=True) :
-		super(WriteHeads,self).__init__(memory=memory,input_dim=input_dim,nbr_heads=nbr_heads,is_read=False)
+		super(WriteHeads,self).__init__(memory=memory,input_dim=input_dim,nbr_heads=nbr_heads,is_read=False, use_cuda=use_cuda)
 
 		
 	def write(self, ctrl_input) :
@@ -872,7 +872,7 @@ class NTM(nn.Module) :
 			self = self.cuda()
 
 	def build_memory(self) :
-		self.memory = NTMMemory(mem_nbr_slots=self.mem_nbr_slots,mem_dim=self.mem_dim,batch_dim=self.batch_size)
+		self.memory = NTMMemory(mem_nbr_slots=self.mem_nbr_slots,mem_dim=self.mem_dim,batch_dim=self.batch_size, use_cuda=self.use_cuda)
 		
 	def build_controller(self) :
 		self.controller = NTMController( input_dim=self.input_dim, 
