@@ -555,7 +555,9 @@ class BasicHeads(nn.Module) :
 		else :
 			self.prev_w = Variable(torch.zeros(self.batch_dim, self.nbr_heads, self.memory.mem_nbr_slots))
 			
-	def reset(self) :
+	def reset(self,batch_size=None) :
+		if batch_size is not None :
+			self.batch_dim = batch_size
 		self.reset_prev_w()
 
 	def write(self,ctlr_input) :
@@ -689,7 +691,9 @@ class NTMController(nn.Module) :
 		self.LSTMSs_OUTPUTs = list()
 		self.LSTMSs_OUTPUTs.append( (0,self.ControllerStates))
 
-	def reset(self) :
+	def reset(self,batch_size=None) :
+		if batch_size is not None :
+			self.batch_size = batch_size
 		self.init_controllerStates()
 
 	def forward_controller(self,x) :
@@ -743,7 +747,10 @@ class NTMMemory(nn.Module) :
 		
 		#self.reset()
 
-	def reset(self) :
+	def reset(self,batch_size=None) :
+		if batch_size is not None :
+			self.batch_dim = batch_size
+
 		self.memory = list()
 
 		if self.use_cuda :
@@ -934,11 +941,13 @@ class NTM(nn.Module) :
 
 		return self.ext_output[-1] 
 
-	def reset(self) :
-		self.controller.reset()
-		self.memory.reset()
-		self.readHeads.reset()
-		self.writeHeads.reset()
+	def reset(self,batch_size=None) :
+		if batch_size is not None :
+			self.batch_size = batch_size
+		self.controller.reset(self.batch_size)
+		self.memory.reset(self.batch_size)
+		self.readHeads.reset(self.batch_size)
+		self.writeHeads.reset(self.batch_size)
 		self.reset_outputs()
 		
 
