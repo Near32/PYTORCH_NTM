@@ -663,7 +663,7 @@ class NTMController(nn.Module) :
 								hidden_size=self.LSTMhidden_size,
 								num_layers=num_layers,
 								dropout=dropout,
-								batch_first=True,
+								batch_first=False,
 								bidirectional=False)
 
 		# States :
@@ -701,6 +701,7 @@ class NTMController(nn.Module) :
 		self.prev_read_vec = x['prev_read_vec']
 
 		#print(self.input.size(), self.prev_desired_output.size(), self.prev_read_vec.size())
+		#print( self.input , self.prev_desired_output , self.prev_read_vec )
 		ctrl_input = torch.cat( [self.input, self.prev_desired_output, self.prev_read_vec], dim=2)
 		
 		# Controller States :
@@ -831,7 +832,10 @@ class NTMMemory(nn.Module) :
 		nbrHeads = w.size()[1]
 		
 		memory_bhSMidx = torch.cat([self.memory[-1].unsqueeze(1)]*nbrHeads, dim=1)
-		self.reading_t.append( torch.sum( w.unsqueeze(3) * memory_bhSMidx, dim=2) )
+		#print(w.size(),memory_bhSMidx.size())
+		#self.reading_t.append( torch.sum( w.unsqueeze(3) * memory_bhSMidx, dim=2) )
+		wb = torch.cat( [w.unsqueeze(3) for i in range(memory_bhSMidx.size()[3])], dim=3)
+		self.reading_t.append( torch.sum( wb * memory_bhSMidx, dim=2) )
 		
 		return self.reading_t[-1]
 
